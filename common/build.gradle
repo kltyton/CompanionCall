@@ -40,7 +40,7 @@ if (loader == 'fabric') {
     layers.add(new File(commonRoot, "src/compat/fabric/config/${apiGeneration}"))
     def configVersion = minecraft == '1.20.1' ? '8.0.3' : minecraft == '1.21.1' ? '21.1.6' : minecraft == '26.1.2' ? '26.1.5' : '26.2.1'
     def configModule = minecraft == '1.20.1' ? 'forgeconfigapiport-common' : 'forgeconfigapiport-common-neoforgeapi'
-    repositories { maven { url = 'https://maven.fuzs.dev/' } }
+    repositories { maven { url = 'https://raw.githubusercontent.com/Fuzss/modresources/main/maven/' } }
     dependencies.add('compileOnly', "fuzs.forgeconfigapiport:${configModule}:${configVersion}")
 }
 layers.addAll([
