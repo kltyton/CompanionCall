@@ -1,0 +1,5 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'me.modmuss50.mod-publish-plugin' version "${publish_plugin_version}"
+}
+apply from: file('../../gradle/target-conventions/fabric.gradle')

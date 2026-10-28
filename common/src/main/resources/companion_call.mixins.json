@@ -1,0 +1,43 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.kltyton.companioncall.mixin",
+  "compatibilityLevel": "JAVA_${java_version}",
+  "refmap": "companion_call.refmap.json",
+  "mixins": [
+    "access.MobGoals",
+    "access.EntityPassengers",
+    "access.EntityManagerAccess",
+    "access.ServerLevelAccess",
+    "access.PlayerSaveAccess",
+    "access.HorseMenuAccess",
+    "entity.RecallGlowEntityMixin",
+    "entity.BoardingApproachMixin",
+    "entity.ManualOwnershipMixin",
+    "entity.AttachedRecallMixin",
+    "lifecycle.ServerLifecycleMixin",
+    "lifecycle.RecallContactMixin",
+    "lifecycle.NativeTravelInputMixin",
+    "lifecycle.RecallMotionIntentMixin",
+    "lifecycle.EntityLoadedMixin",
+    "lifecycle.AnimalTamingMixin",
+    "lifecycle.HorseTamingMixin",
+    "transfer.EntityLifecycleGuardMixin",
+    "transfer.LivingStateGuardMixin",
+    "transfer.EntityTickGuardMixin",
+    "transfer.PlayerTransactionMixin",
+    "transfer.RidingGuardMixin",
+    "transfer.PlayerInteractionMixin",
+    "transfer.EntityDamageMixin",
+    "transfer.EntityMarkMixin",
+    "storage.EntityStorageMixin"
+  ],
+  "client": [
+    "client.KeyMappingAccess",
+    "client.ClientTickMixin",
+    "client.RecallInterpolationMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

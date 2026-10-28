@@ -1,0 +1,20 @@
+buildscript {
+    repositories {
+        gradlePluginPortal()
+        maven { url = 'https://maven.fabricmc.net/' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath "net.fabricmc:fabric-loom:${loom_version}"
+        classpath "me.modmuss50:mod-publish-plugin:${publish_plugin_version}"
+    }
+}
+apply plugin: 'fabric-loom'
+apply plugin: 'java'
+apply plugin: 'me.modmuss50.mod-publish-plugin'
+apply from: file('../../gradle/target-conventions/fabric.gradle')
+apply from: file('../../gradle/target-conventions/companion-call.gradle')
+
+tasks.named('processResources') {
+    dependsOn tasks.named('compileJava'), project(':common').tasks.named('compileJava')
+}

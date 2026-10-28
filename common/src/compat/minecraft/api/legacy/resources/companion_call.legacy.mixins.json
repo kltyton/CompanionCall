@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.kltyton.companioncall.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "companion_call.refmap.json",
+  "mixins": [
+    "transfer.LegacyPortalMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

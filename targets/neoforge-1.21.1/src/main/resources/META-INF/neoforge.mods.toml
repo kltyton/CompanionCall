@@ -1,0 +1,34 @@
+modLoader = "javafml"
+loaderVersion = "${fml_version_range}"
+license = "${mod_license}"
+
+[[mixins]]
+config = "companion_call.mixins.json"
+
+[[mods]]
+modId = "${mod_id}"
+version = "${mod_version}"
+displayName = "${mod_name}"
+authors = "${mod_authors}"
+description = "${mod_description}"
+
+[[dependencies.${mod_id}]]
+modId = "kltytonui"
+type = "required"
+versionRange = "[1.2.7,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.${mod_id}]]
+modId = "neoforge"
+type = "required"
+versionRange = "${loader_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.${mod_id}]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"

@@ -1,0 +1,146 @@
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.bundling.Jar
+
+def shared = project(':common')
+def projectRoot = file('../..')
+def kuiMinecraft = minecraft_version.startsWith('26.1') ? '26.1' : minecraft_version
+def kuiTarget = "${loader}-${kuiMinecraft}"
+def kuiVersion = '1.2.9'
+def kuiModule = "io.github.kltyton.kltytonui:KltytonUI-${kuiTarget}:${kuiVersion}"
+def extrasVersion = '0.4.1'
+def refmapName = "${mod_id}.refmap.json"
+def mappedMixin = loader == 'forge' || (loader == 'fabric' && (java_version as int) < 25)
+
+repositories {
+    exclusiveContent {
+        forRepository { flatDir { dirs new File(projectRoot, "libs/kltytonui/${kuiTarget}") } }
+        filter { includeGroup 'io.github.kltyton.kltytonui' }
+    }
+    maven { url = 'https://maven.latvian.dev/releases' }
+    maven { url = 'https://www.cursemaven.com' }
+    maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
+    maven { url = 'https://maven.fuzs.dev/' }
+}
+
+def kui = dependencies.add(loader == 'forge' || (loader == 'fabric' && (java_version as int) < 25)
+        ? 'modImplementation' : 'implementation', kuiModule)
+dependencies.add('compileOnly', "io.github.llamalad7:mixinextras-common:${extrasVersion}")
+if (loader == 'neoforge' && minecraft_version == '26.2') {
+    repositories {
+        exclusiveContent {
+            forRepository {
+                maven { url = 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/' }
+            }
+            filter { includeGroup 'com.geckolib' }
+        }
+    }
+    dependencies.add('compileOnly', 'com.geckolib:geckolib-neoforge-26.2:5.5.3')
+}
+
+def rhino = minecraft_version == '1.20.1'
+        ? "curse.maven:rhino-416294:${loader == 'forge' ? '6186971' : '6186969'}"
+        : 'dev.latvian.mods:rhino:2101.2.7-build.82'
+def rhinoDependency = dependencies.add(loader == 'forge' || (loader == 'fabric' && (java_version as int) < 25)
+        ? 'modImplementation' : 'implementation', rhino)
+
+if (loader == 'fabric') {
+    def configVersion = minecraft_version == '1.20.1' ? '8.0.3' : minecraft_version == '1.21.1' ? '21.1.6' : minecraft_version == '26.1.2' ? '26.1.5' : '26.2.1'
+    def configPort = "fuzs.forgeconfigapiport:forgeconfigapiport-fabric:${configVersion}"
+    dependencies.add((java_version as int) < 25 ? 'modImplementation' : 'implementation', configPort)
+    dependencies.add('include', configPort)
+    dependencies.add('include', kuiModule)
+    dependencies.add('include', rhino)
+    if ((java_version as int) < 25) {
+        dependencies.add('annotationProcessor', "io.github.llamalad7:mixinextras-common:${extrasVersion}")
+        loom.mixin.defaultRefmapName = refmapName
+    }
+} else {
+    dependencies {
+        jarJar(kui) {
+            version { strictly "[${kuiVersion}]"; prefer kuiVersion }
+        }
+        jarJar(rhinoDependency)
+    }
+    if (loader == 'forge') {
+        dependencies {
+            jarJar(implementation("io.github.llamalad7:mixinextras-forge:${extrasVersion}")) {
+                version { strictly "[${extrasVersion},)"; prefer extrasVersion }
+            }
+            annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+        }
+        mixin {
+            add sourceSets.main, refmapName
+            config "${mod_id}.mixins.json"
+            config "${mod_id}.legacy.mixins.json"
+        }
+        tasks.named('jar', Jar) {
+            manifest.attributes('MixinConfigs': "${mod_id}.mixins.json,${mod_id}.legacy.mixins.json")
+        }
+        def mappings = extensions.getByName('obfuscation').namedToSrgMappings
+        def refmap = layout.buildDirectory.file("mixin/${refmapName}")
+        def extraMappings = layout.buildDirectory.file("mixin/${refmapName}.mappings.tsrg")
+        shared.repositories { maven { url = 'https://repo.spongepowered.org/repository/maven-public/' } }
+        shared.dependencies { annotationProcessor 'org.spongepowered:mixin:0.8.5:processor' }
+        shared.tasks.named('compileJava', JavaCompile) {
+            inputs.file(mappings)
+            outputs.files(refmap, extraMappings)
+            doFirst {
+                refmap.get().asFile.parentFile.mkdirs()
+                options.compilerArgs.addAll([
+                        "-AreobfTsrgFile=${mappings.get().asFile.absolutePath}",
+                        "-AoutTsrgFile=${extraMappings.get().asFile.absolutePath}",
+                        "-AoutRefMapFile=${refmap.get().asFile.absolutePath}",
+                        '-AmappingTypes=tsrg', '-ApluginVersion=0.7', '-AdefaultObfuscationEnv=searge'
+                ])
+            }
+        }
+    }
+}
+
+tasks.named('processResources', ProcessResources) {
+    inputs.property('mixinJavaVersion', java_version)
+    inputs.property('mixinNeedsRefmap', mappedMixin)
+    filesMatching('*.mixins.json') {
+        filter { line ->
+            if (!mappedMixin && line.contains('"refmap"')) return null
+            line.replace('${java_version}', java_version.toString())
+        }
+    }
+}
+
+if (loader == 'fabric' && (java_version as int) < 25) {
+    gradle.projectsEvaluated {
+        def nativeCompiler = tasks.named('compileJava', JavaCompile).get()
+        def args = new ArrayList<String>(nativeCompiler.options.compilerArgs)
+        def outputArgs = args.findAll {
+            it.startsWith('-AoutRefMapFile=') || it.startsWith('-AoutMapFileNamedIntermediary=')
+        }
+        def mappingOutputs = outputArgs.collect { file(it.substring(it.indexOf('=') + 1)) }
+        shared.tasks.named('compileJava', JavaCompile) {
+            options.annotationProcessorPath = nativeCompiler.options.annotationProcessorPath
+            options.compilerArgs.addAll(args)
+            outputs.files(mappingOutputs)
+            doFirst { mappingOutputs.each { it.parentFile.mkdirs() } }
+        }
+        def refmap = args.find { it.startsWith('-AoutRefMapFile=') }
+        if (refmap != null) {
+            tasks.named('processResources', ProcessResources) {
+                from file(refmap.substring(refmap.indexOf('=') + 1))
+            }
+        }
+    }
+}
+
+if (loader == 'neoforge' && minecraft_version == '26.2') {
+    def embedded = tasks.register('embeddedJar', Jar) {
+        archiveClassifier = 'embedded'
+        from sourceSets.main.output
+        from shared.sourceSets.main.output
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        from(new File(projectRoot, 'LICENSE')) { rename { "LICENSE_${mod_id}" } }
+        manifest.attributes('Implementation-Version': project.version.toString())
+    }
+    tasks.named('build') { dependsOn embedded }
+}
+
+apply from: file('../../gradle/target-conventions/distribution-compression.gradle')
