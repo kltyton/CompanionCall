@@ -28,7 +28,7 @@ An eligible loaded companion navigates toward your changing position. Where reca
 
 Install the standalone file for your Minecraft version and loader on both client and server. Fabric also requires Fabric API. KltytonUI and its required script runtime dependencies are included in the standalone file. The `embedded` variant is for a host that supplies KltytonUI; do not install it alongside the standalone version.
 
-The summon and add keys can be changed in Minecraft's controls. Client configuration includes the HUD, selector, model previews, management entry, add key and HUD position. Common configuration includes the hold threshold and recall recovery timing. Commands are documented in the [README](../../README.md).
+The summon and add keys can be changed in Minecraft's controls. Client configuration includes the HUD, selector, model previews, management entry, add key and HUD position. Common configuration includes the hold threshold and recall recovery timing. Commands are documented in the [README](https://github.com/kltyton/CompanionCall#commands).
 
 ## 中文介绍
 
@@ -52,4 +52,4 @@ HUD 显示当前伙伴和召回状态。卡片展示伙伴外观及可用信息�
 
 客户端和服务端都需要安装与 Minecraft 版本及加载器对应的独立版。Fabric 还需要 Fabric API。独立版包含 KltytonUI 和必要的脚本运行依赖。`embedded` 版供自行提供 KltytonUI 的宿主使用，不要与独立版同时安装。
 
-召回键和添加键可在原版控制设置中修改。客户端配置包含 HUD、选择器、模型预览、管理入口、添加按键和 HUD 位置；公共配置包含长按阈值与召回恢复等待时间。指令说明见 [README](../../README.md)。
+召回键和添加键可在原版控制设置中修改。客户端配置包含 HUD、选择器、模型预览、管理入口、添加按键和 HUD 位置；公共配置包含长按阈值与召回恢复等待时间。指令说明见 [README](https://github.com/kltyton/CompanionCall#commands)。
