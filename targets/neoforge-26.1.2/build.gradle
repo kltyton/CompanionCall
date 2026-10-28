@@ -1,0 +1,7 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version "${moddev_version}"
+    id 'me.modmuss50.mod-publish-plugin' version "${publish_plugin_version}"
+}
+apply from: file('../../gradle/target-conventions/neoforge.gradle')
+apply from: file('../../gradle/target-conventions/companion-call.gradle')

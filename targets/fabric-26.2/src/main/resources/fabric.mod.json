@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "authors": ["${mod_authors}"],
+  "license": "${mod_license}",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["${mod_java_package}.loader.fabric.CompanionCallFabric", "${mod_java_package}.loader.fabric.network.FabricNetworkSetup"],
+    "client": ["${mod_java_package}.loader.fabric.CompanionCallFabricClient", "${mod_java_package}.client.network.FabricClientNetworkSetup"]
+  },
+  "mixins": ["companion_call.mixins.json"],
+  "depends": {
+    "fabric-api": "*",
+    "forgeconfigapiport": "*",
+    "kltytonui": ">=1.2.7",
+    "fabricloader": "${loader_version_range}",
+    "minecraft": "=${minecraft_version}",
+    "java": ">=${java_version}"
+  }
+}

@@ -1,0 +1,44 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+
+def compressArchive = { File artifact ->
+    def directory = new File(System.getProperty('java.io.tmpdir'), "archives/${base.archivesName.get()}")
+    directory.mkdirs()
+    def compressed = new File(directory, "${artifact.name}.compressed")
+    long originalBytes = artifact.length()
+    try {
+        new ZipFile(artifact).withCloseable { source ->
+            new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(compressed))).withCloseable { output ->
+                output.setLevel(Deflater.BEST_COMPRESSION)
+                source.entries().toList().each { entry ->
+                    def copy = new ZipEntry(entry)
+                    copy.setMethod(ZipEntry.DEFLATED)
+                    copy.setCompressedSize(-1)
+                    output.putNextEntry(copy)
+                    if (!entry.isDirectory()) source.getInputStream(entry).withCloseable { it.transferTo(output) }
+                    output.closeEntry()
+                }
+            }
+        }
+        if (compressed.length() < originalBytes) {
+            Files.move(compressed.toPath(), artifact.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+        logger.lifecycle("Distribution compression ${artifact.name}: ${originalBytes} -> ${artifact.length()} bytes")
+    } finally {
+        Files.deleteIfExists(compressed.toPath())
+    }
+}
+
+def mapped = tasks.findByName('remapJar')
+def obfuscated = tasks.findByName('reobfJar')
+def production = mapped instanceof AbstractArchiveTask ? mapped :
+        (obfuscated instanceof AbstractArchiveTask ? obfuscated : tasks.named('jar', Jar).get())
+def release = obfuscated ?: production
+release.doLast { compressArchive(production.archiveFile.get().asFile) }
+tasks.matching { it.name == 'embeddedJar' }.configureEach {
+    doLast { compressArchive(archiveFile.get().asFile) }
+}

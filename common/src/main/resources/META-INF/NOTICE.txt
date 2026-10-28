@@ -1,0 +1,14 @@
+Companion Call
+Copyright (c) 2026 kltyton. Licensed under the MIT License.
+
+The build framework derives from KltytonTemple, copyright 2026 Tower of Sighs
+and kltyton, licensed under MIT. Its license is included in licenses/.
+
+The standalone distribution includes unmodified KltytonUI 1.2.7, licensed
+under LGPL-2.1. Its license is included in licenses/. Corresponding source:
+https://github.com/kltyton/KltytonUI
+KltytonUI and its nested libraries retain their own licenses and notices.
+The embedded distribution uses the host's KltytonUI installation.
+
+Whistle resource: eugenes_horse_whistle by kltyton, used with permission.
+https://github.com/kltyton/eugenes_horse_whistle/tree/b9910328c59a0924ce4f44c4a03b1fe12d46b453

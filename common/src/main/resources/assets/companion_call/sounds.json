@@ -1,0 +1,11 @@
+{
+  "whistle": {
+    "subtitle": "subtitles.companion_call.whistle",
+    "sounds": [
+      {
+        "name": "companion_call:whistle",
+        "stream": false
+      }
+    ]
+  }
+}
