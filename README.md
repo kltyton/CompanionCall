@@ -1,5 +1,7 @@
 # Companion Call / 唤伴
 
+![Companion Call icon](docs/publishing/artwork/companion-call-icon-400.png)
+
 Call your companions and mounts to your side, choose between them in a card interface, and keep their status close at hand.
 
 [中文说明](#中文说明) · [Project descriptions / 发布文案](docs/publishing/descriptions.md)
