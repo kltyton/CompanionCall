@@ -71,9 +71,13 @@ def constantFile = new File(constants, "${packageName.replace('.', '/')}/BuildIn
 def constantText = "package ${packageName};\n\npublic final class BuildInfo {\n" +
         "    public static final String MOD_ID = ${JsonOutput.toJson(identity.getProperty('mod_id'))};\n" +
         "    private BuildInfo() {}\n}\n"
-if (!constantFile.isFile() || constantFile.getText('UTF-8') != constantText) {
-    constantFile.parentFile.mkdirs()
-    constantFile.setText(constantText, 'UTF-8')
+def generateBuildInfo = tasks.register('generateBuildInfo') {
+    inputs.property('source', constantText)
+    outputs.file(constantFile)
+    doLast {
+        constantFile.parentFile.mkdirs()
+        constantFile.setText(constantText, 'UTF-8')
+    }
 }
 sourceSets {
     main {
@@ -85,7 +89,10 @@ sourceSets {
         resources.setSrcDirs(active ? [new File(commonRoot, 'src/test/resources')] : [])
     }
 }
-tasks.named('compileJava', JavaCompile) { source javaDirectories, constants }
+tasks.named('compileJava', JavaCompile) {
+    dependsOn generateBuildInfo
+    source javaDirectories, constants
+}
 tasks.named('compileTestJava', JavaCompile) { source new File(commonRoot, 'src/test/java') }
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
@@ -97,6 +104,7 @@ tasks.named('processResources', ProcessResources) {
 }
 tasks.named('processTestResources', ProcessResources) { from new File(commonRoot, 'src/test/resources') }
 tasks.named('sourcesJar', Jar) {
+    dependsOn generateBuildInfo
     from javaDirectories
     from constants
     from resourceDirectories

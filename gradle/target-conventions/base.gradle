@@ -35,6 +35,7 @@ sourceSets {
     }
 }
 tasks.named('sourcesJar', Jar) {
+    dependsOn common.tasks.named('generateBuildInfo')
     from common.templeSourceDirectories
     from common.templeResourceDirectories
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
