@@ -21,6 +21,7 @@
   "key.companion_call.add_ridden": "Add the entity you are riding",
   "subtitles.companion_call.whistle": "Whistle sounds",
   "companion_call.ui.title": "Companion Call",
+  "companion_call.ui.show_hud": "Show companion HUD",
   "companion_call.ui.choose": "Scroll to choose a companion",
   "companion_call.ui.release": "Release %s to select · Tap again to call",
   "companion_call.ui.selected": "Selected",

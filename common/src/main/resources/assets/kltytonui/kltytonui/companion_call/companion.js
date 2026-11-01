@@ -174,6 +174,7 @@
      for(var d=0;d<pets.length;d++)if(pets[d].id===this.hovered)content.push(this.detail(pets[d]));
     }
      content.unshift(h("header",{"class":"cc-header"},[h("h1",{"class":"cc-heading"},[this.text("title")]),pets.length?h("div",{"class":"cc-count","aria-live":"polite"},[(this.front+1<10?"0":"")+(this.front+1)+" / "+(pets.length<10?"0":"")+pets.length]):null]));
+     content.push(h("div",{"class":"cc-hud-setting"},[h(McUIVue.McSwitch,{modelValue:this.state.hudEnabled,label:this.text("show_hud"),"onUpdate:modelValue":function(value){self.send("set_hud",value?"true":"false");}})]));
      if(this.state.managementEnabled)content.push(h(McUIVue.McButton,{"class":"cc-open-management",variant:"primary",onClick:function(){self.management=true;self.hovered=null;self.send("manage","");}},
      {"default":function(){return self.text("manage");}}));
     content.push(h("footer",{"class":"cc-footer"},[h("div",{"class":"cc-instruction"},[this.text("choose")]),h("div",{},[this.text("release")]),h("div",{"class":"cc-muted"},[this.text("cancel")])]));

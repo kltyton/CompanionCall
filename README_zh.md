@@ -1,16 +1,16 @@
-# 唤伴
+# 呼朋唤友
 
-![唤伴图标](docs/publishing/artwork/companion-call-icon-400.png)
+![呼朋唤友图标](docs/publishing/artwork/companion-call-icon-400.png)
 
 [English](README.md)
 
-唤伴让你召回自己的宠物和坐骑，通过卡片选择伙伴，并在 HUD 中查看当前状态。
+呼朋唤友让你召回自己的宠物和坐骑，通过卡片选择伙伴，并在 HUD 中查看当前状态。
 
 ## 功能
 
 - **召回伙伴：**短按 **V** 召回当前选中的伙伴，按键可在原版控制设置中修改。
 - **选择伙伴：**长按 **V** 打开卡片选择器，用滚轮切换，松开按键确认；按 **Esc** 取消。
-- **查看状态：**HUD 显示当前伙伴和召回状态，卡片展示伙伴外观及可用信息。
+- **查看状态：**HUD 显示当前伙伴和召回状态，可在选择界面或客户端配置中开关；宠物列表为空时自动隐藏。卡片展示伙伴外观及可用信息。
 - **管理列表：**在选择器中打开管理界面，可隐藏或恢复条目。按 **N** 或使用管理界面可添加当前乘坐的实体；添加已有主人的实体需要管理员权限。
 - **寻找伙伴：**已加载的伙伴会朝不断变化的玩家位置寻路；必要时，召回系统会定位并转移未加载或跨维度的原实体。
 
@@ -45,4 +45,4 @@
 
 ## 致谢与许可
 
-唤伴源码采用 [MIT 许可证](LICENSE)。KltytonUI 采用 LGPL-2.1 许可证，第三方声明随发行包提供。哨声资源来自 [Eugene's Horse Whistle](https://github.com/kltyton/eugenes_horse_whistle/blob/b9910328c59a0924ce4f44c4a03b1fe12d46b453/src/main/resources/assets/eugenes_horse_whistle/sounds/whistle.ogg)。
+呼朋唤友源码采用 [MIT 许可证](LICENSE)。KltytonUI 采用 LGPL-2.1 许可证，第三方声明随发行包提供。哨声资源来自 [Eugene's Horse Whistle](https://github.com/kltyton/eugenes_horse_whistle/blob/b9910328c59a0924ce4f44c4a03b1fe12d46b453/src/main/resources/assets/eugenes_horse_whistle/sounds/whistle.ogg)。

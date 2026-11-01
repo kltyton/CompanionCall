@@ -24,7 +24,7 @@ public final class CompanionClient {
     private static final Gson GSON = new Gson();
     private static final String[] TEXTS = {"title", "choose", "release", "cancel", "empty", "empty_help",
             "health", "type", "dimension", "position", "recorded", "sitting", "standing", "movement",
-            "speed", "jump", "land", "air", "water", "current", "selected", "preview_unavailable"};
+            "speed", "jump", "land", "air", "water", "current", "selected", "preview_unavailable", "show_hud"};
     private static final String[] MANAGEMENT_TEXTS = {"manage", "active", "blacklist", "restore", "remove",
             "add_ridden", "current_ridden", "not_riding", "close", "remove_help", "blacklist_empty", "unavailable", "set_selected"};
     private static boolean initialized;
@@ -47,6 +47,7 @@ public final class CompanionClient {
     private static String documentJson;
     private static boolean documentPreviews;
     private static boolean documentManagement;
+    private static boolean documentHud;
     private static boolean documentSyncError;
 
     private CompanionClient() {}
@@ -203,8 +204,9 @@ public final class CompanionClient {
 
     private static void updateDocuments() {
         var options = ClientOptions.get();
-        if (!options.hudEnabled() && hud != null) { hud.remove(); hud = null; }
-        if (options.hudEnabled() && hud == null) {
+        boolean showHud = options.hudEnabled() && !snapshot.pets().isEmpty();
+        if (!showHud && hud != null) { hud.remove(); hud = null; }
+        if (showHud && hud == null) {
             hud = KltytonUI.createDocument(HUD);
             if (hud == null) throw new IllegalStateException("Missing companion HUD resource: " + HUD);
         }
@@ -218,6 +220,7 @@ public final class CompanionClient {
         Language language = Language.getInstance();
         if (documentJson == null || snapshot != documentSnapshot || language != documentLanguage
                 || options.entityPreviews() != documentPreviews || options.managementEnabled() != documentManagement
+                || options.hudEnabled() != documentHud
                 || syncError != documentSyncError || !Objects.equals(keyName, documentKey)
                 || !Objects.equals(addKeyName, documentAddKey)) {
             documentJson = serializeDocument(options, keyName, addKeyName);
@@ -225,6 +228,7 @@ public final class CompanionClient {
             documentLanguage = language;
             documentPreviews = options.entityPreviews();
             documentManagement = options.managementEnabled();
+            documentHud = options.hudEnabled();
             documentSyncError = syncError;
             documentKey = keyName;
             documentAddKey = addKeyName;
@@ -245,6 +249,7 @@ public final class CompanionClient {
         data.put("ridden", snapshot.ridden());
         data.put("previewsEnabled", options.entityPreviews());
         data.put("managementEnabled", options.managementEnabled());
+        data.put("hudEnabled", options.hudEnabled());
         data.put("selected", snapshot.selected());
         data.put("loaded", snapshot.loaded());
         var records = allRecords();
@@ -297,7 +302,12 @@ public final class CompanionClient {
             String action = commands.getAttribute("data-action");
             String id = commands.getAttribute("data-id");
             net.minecraft.client.Minecraft.getInstance().execute(() -> {
-                if (selector == null || !ClientAccess.ready() || !ClientOptions.get().managementEnabled()) return;
+                if (selector == null || !ClientAccess.ready()) return;
+                if ("set_hud".equals(action)) {
+                    if ("true".equals(id) || "false".equals(id)) ClientOptions.setHudEnabled(Boolean.parseBoolean(id));
+                    return;
+                }
+                if (!ClientOptions.get().managementEnabled()) return;
                 if ("manage".equals(action)) {
                     managementOpen = true;
                     new ClientRequest("refresh", "").sendToServer();

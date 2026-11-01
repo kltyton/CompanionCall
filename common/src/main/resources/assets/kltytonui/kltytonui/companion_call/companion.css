@@ -91,6 +91,7 @@ companion-preview[data-preview-state="unavailable"] + .cc-model-unavailable { di
 .cc-hud .cc-meter { margin-top:2px; }
 .cc-hud .mc-progress__track { height:6px; }
 .cc-open-management { position:absolute; top:10%; right:6%; }
+.cc-hud-setting { position:absolute; top:10%; left:6%; z-index:40; max-width:28%; }
 .cc-management.mc-card {
  position:absolute; left:50%; top:14%; transform:translateX(-50%); width:80%; max-width:960px; height:72%; max-height:620px; display:flex; flex-direction:column; gap:16px; padding:24px;
 }
@@ -109,7 +110,7 @@ companion-preview[data-preview-state="unavailable"] + .cc-model-unavailable { di
 .cc-management-note { font-size:12px; line-height:20px; color:var(--cc-muted); }
 @media (max-height:640px) {
  .cc-theme { --cc-card-width:210px; --cc-card-height:264px; }
- .cc-header, .cc-open-management { top:4%; } .cc-heading { font-size:28px; line-height:36px; }
+  .cc-header, .cc-open-management, .cc-hud-setting { top:4%; } .cc-heading { font-size:28px; line-height:36px; }
  .cc-carousel { top:14%; height:70%; } .cc-footer { bottom:4%; }
  .cc-model-stage { height:136px; top:34px; }
  .cc-details { top:18%; max-height:58%; width:250px; padding:16px; }

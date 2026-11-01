@@ -10,7 +10,7 @@ Call your companions and mounts to your side, choose between them in a card inte
 
 - **Call a companion:** tap **V** to call the selected companion. The key can be changed in Minecraft's controls.
 - **Choose a companion:** hold **V** to open the card selector, scroll to choose, and release the key to confirm. Press **Esc** to cancel.
-- **Keep track:** the HUD displays the selected companion and recall status. Cards show the companion's appearance and available details.
+- **Keep track:** the HUD displays the selected companion and recall status. Toggle it in the selector or client configuration. It stays hidden when your companion list is empty. Cards show the companion's appearance and available details.
 - **Manage the list:** open management from the selector to hide or restore entries. Press **N**, or use the management interface, to add the entity you are riding. Adding an entity with an owner requires administrator permission.
 - **Find your way back together:** a loaded companion navigates toward your changing position. When necessary, the recall system can locate and transfer the original entity across dimensions or from unloaded areas.
 

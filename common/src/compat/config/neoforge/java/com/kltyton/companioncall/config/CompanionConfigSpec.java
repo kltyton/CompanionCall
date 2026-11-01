@@ -28,7 +28,10 @@ public final class CompanionConfigSpec {
         HUD_BOTTOM = client.comment("HUD bottom margin in UI pixels.").defineInRange("hudBottom", 22, -100000, 100000);
         CLIENT = client.build();
         ClientOptions.install(() -> new ClientOptions.Values(HUD.get(), SELECTOR.get(), PREVIEWS.get(),
-                MANAGEMENT.get(), RIDDEN_SHORTCUT.get(), HUD_LEFT.get(), HUD_BOTTOM.get()));
+                MANAGEMENT.get(), RIDDEN_SHORTCUT.get(), HUD_LEFT.get(), HUD_BOTTOM.get()), enabled -> {
+            HUD.set(enabled);
+            CLIENT.save();
+        });
         var legacy = RecallConfig.legacyDefaults();
         var common = new ModConfigSpec.Builder();
         HOLD_MILLIS = common.comment("Hold duration before opening the selector, in milliseconds.")
