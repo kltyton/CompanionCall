@@ -18,7 +18,7 @@ Tamed companions are registered as they are discovered. Other entities, includin
 
 ### Installation
 
-Install the standalone file matching your Minecraft version and loader on both client and server. Fabric also requires the matching Fabric API. The standalone file contains KltytonUI and its required script runtime dependencies. Do not install the standalone and `embedded` variants together; `embedded` is intended for a host such as Eden Realm that supplies KltytonUI itself.
+Install the standalone file matching your Minecraft version and loader on both client and server. Fabric also requires the matching Fabric API. The standalone file includes KltytonUI with its NeonJS script runtime. The `embedded` variant requires the host to supply KltytonUI 1.3.1 or later. Install only one variant.
 
 | Minecraft | Loader | Java |
 | --- | --- | --- |
@@ -41,7 +41,7 @@ Client settings control the HUD, selector, previews, management entry, add key, 
 
 ## Building from source
 
-Each target has its own Gradle Wrapper. Put the matching KltytonUI JAR in `libs/kltytonui/<loader>-<KUI target>` and run `./gradlew build` (or `gradlew.bat build` on Windows) from the target directory. Minecraft 26.1.2 uses the KUI `26.1` target name. The Gradle process for 1.20.1 uses Java 21 with a Java 17 compilation toolchain. Build output is placed in the target's `build/libs` directory.
+Each target has its own Gradle Wrapper. Run `./gradlew build` (or `gradlew.bat build` on Windows) from the target directory. Gradle resolves the KltytonUI version pinned in `gradle.properties` from Sighs Maven. Minecraft 26.1.2 uses the KUI `26.1` target name. The Gradle process for 1.20.1 uses Java 21 with a Java 17 compilation toolchain. Build output is placed in the target's `build/libs` directory.
 
 ## Credits and license
 

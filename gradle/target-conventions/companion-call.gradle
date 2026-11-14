@@ -1,11 +1,13 @@
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.bundling.Jar
+import groovy.json.JsonSlurper
+import java.util.zip.ZipFile
 
 def shared = project(':common')
 def projectRoot = file('../..')
 def kuiMinecraft = minecraft_version.startsWith('26.1') ? '26.1' : minecraft_version
 def kuiTarget = "${loader}-${kuiMinecraft}"
-def kuiVersion = '1.2.9'
+def kuiVersion = kui_version.toString()
 def kuiModule = "io.github.kltyton.kltytonui:KltytonUI-${kuiTarget}:${kuiVersion}"
 def extrasVersion = '0.4.1'
 def refmapName = "${mod_id}.refmap.json"
@@ -13,11 +15,14 @@ def mappedMixin = loader == 'forge' || (loader == 'fabric' && (java_version as i
 
 repositories {
     exclusiveContent {
-        forRepository { flatDir { dirs new File(projectRoot, "libs/kltytonui/${kuiTarget}") } }
-        filter { includeGroup 'io.github.kltyton.kltytonui' }
+        forRepository {
+            maven {
+                name = 'Sighs KltytonUI'
+                url = uri('https://maven.sighs.cc/repository/maven-public/')
+            }
+        }
+        filter { includeModule('io.github.kltyton.kltytonui', "KltytonUI-${kuiTarget}") }
     }
-    maven { url = 'https://maven.latvian.dev/releases' }
-    maven { url = 'https://www.cursemaven.com' }
     maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
     maven { url = 'https://raw.githubusercontent.com/Fuzss/modresources/main/maven/' }
 }
@@ -37,19 +42,12 @@ if (loader == 'neoforge' && minecraft_version == '26.2') {
     dependencies.add('compileOnly', 'com.geckolib:geckolib-neoforge-26.2:5.5.3')
 }
 
-def rhino = minecraft_version == '1.20.1'
-        ? "curse.maven:rhino-416294:${loader == 'forge' ? '6186971' : '6186969'}"
-        : 'dev.latvian.mods:rhino:2101.2.7-build.82'
-def rhinoDependency = dependencies.add(loader == 'forge' || (loader == 'fabric' && (java_version as int) < 25)
-        ? 'modImplementation' : 'implementation', rhino)
-
 if (loader == 'fabric') {
     def configVersion = minecraft_version == '1.20.1' ? '8.0.3' : minecraft_version == '1.21.1' ? '21.1.6' : minecraft_version == '26.1.2' ? '26.1.5' : '26.2.1'
     def configPort = "fuzs.forgeconfigapiport:forgeconfigapiport-fabric:${configVersion}"
     dependencies.add((java_version as int) < 25 ? 'modImplementation' : 'implementation', configPort)
     dependencies.add('include', configPort)
     dependencies.add('include', kuiModule)
-    dependencies.add('include', rhino)
     if ((java_version as int) < 25) {
         dependencies.add('annotationProcessor', "io.github.llamalad7:mixinextras-common:${extrasVersion}")
         loom.mixin.defaultRefmapName = refmapName
@@ -59,7 +57,6 @@ if (loader == 'fabric') {
         jarJar(kui) {
             version { strictly "[${kuiVersion}]"; prefer kuiVersion }
         }
-        jarJar(rhinoDependency)
     }
     if (loader == 'forge') {
         dependencies {
@@ -80,7 +77,11 @@ if (loader == 'fabric') {
         def refmap = layout.buildDirectory.file("mixin/${refmapName}")
         def extraMappings = layout.buildDirectory.file("mixin/${refmapName}.mappings.tsrg")
         shared.repositories { maven { url = 'https://repo.spongepowered.org/repository/maven-public/' } }
-        shared.dependencies { annotationProcessor 'org.spongepowered:mixin:0.8.5:processor' }
+        shared.dependencies {
+            // The MixinExtras processor registers its injectors with the Mixin processor.
+            annotationProcessor "io.github.llamalad7:mixinextras-common:${extrasVersion}"
+            annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+        }
         shared.tasks.named('compileJava', JavaCompile) {
             inputs.file(mappings)
             outputs.files(refmap, extraMappings)
@@ -92,6 +93,28 @@ if (loader == 'fabric') {
                         "-AoutRefMapFile=${refmap.get().asFile.absolutePath}",
                         '-AmappingTypes=tsrg', '-ApluginVersion=0.7', '-AdefaultObfuscationEnv=searge'
                 ])
+            }
+        }
+        def forgeJar = tasks.named('jar', Jar).flatMap { it.archiveFile }
+        tasks.named('verifyDistribution') {
+            def attachedMixin = 'com/kltyton/companioncall/mixin/entity/AttachedRecallMixin'
+            def hooks = ['move', 'setPos(DDD)V', 'tick',
+                         'Lnet/minecraft/world/entity/decoration/HangingEntity;survives()Z']
+            inputs.property('attachedRecallRefmapHooks', hooks)
+            doLast {
+                def artifact = forgeJar.get().asFile
+                new ZipFile(artifact).withCloseable { zip ->
+                    def entry = zip.getEntry(refmapName)
+                    if (entry == null) throw new GradleException("Missing ${refmapName} in ${artifact}")
+                    def map = zip.getInputStream(entry).withCloseable { new JsonSlurper().parse(it, 'UTF-8') }
+                    def attachedMappings = map.mappings?.get(attachedMixin)
+                    def missing = hooks.findAll {
+                        !(attachedMappings?.get(it) ==~ /Lnet\/minecraft\/world\/entity\/decoration\/HangingEntity;m_\d+_\(.*\).+/)
+                    }
+                    if (!missing.isEmpty()) {
+                        throw new GradleException("Missing Forge SRG mappings for ${attachedMixin}: ${missing} in ${artifact}")
+                    }
+                }
             }
         }
     }

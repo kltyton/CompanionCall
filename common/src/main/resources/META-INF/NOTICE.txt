@@ -4,9 +4,9 @@ Copyright (c) 2026 kltyton. Licensed under the MIT License.
 The build framework derives from KltytonTemple, copyright 2026 Tower of Sighs
 and kltyton, licensed under MIT. Its license is included in licenses/.
 
-The standalone distribution includes unmodified KltytonUI 1.2.9, licensed
-under LGPL-2.1. Its license is included in licenses/. Corresponding source:
-https://github.com/kltyton/KltytonUI
+The standalone distribution includes unmodified KltytonUI, licensed under
+LGPL-2.1. Its license is included in licenses/. Corresponding source:
+https://github.com/kltyton/KltytonUI/commit/a9c4dd56df6c2caa6b877068a5f359e45a96a010
 KltytonUI and its nested libraries retain their own licenses and notices.
 The embedded distribution uses the host's KltytonUI installation.
 

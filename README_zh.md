@@ -18,7 +18,7 @@
 
 ## 安装
 
-客户端和服务端都需要安装与 Minecraft 版本、加载器对应的独立版。Fabric 还需要对应版本的 Fabric API。独立版包含 KltytonUI 及其脚本运行依赖。不要同时安装独立版与 `embedded` 版；后者供伊甸之境等自行提供 KltytonUI 的宿主使用。
+客户端和服务端都需要安装与 Minecraft 版本、加载器对应的独立版。Fabric 还需要对应版本的 Fabric API。独立版包含 KltytonUI 及其内置的 NeonJS 脚本运行时。`embedded` 版需要宿主提供 KltytonUI 1.3.1 或更高版本。两个版本选装其一。
 
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |
@@ -41,7 +41,7 @@
 
 ## 从源码构建
 
-各目标使用自己的 Gradle Wrapper。将匹配的 KltytonUI JAR 放入 `libs/kltytonui/<加载器>-<KUI 目标>`，然后在目标目录执行 `./gradlew build`；Windows 使用 `gradlew.bat build`。Minecraft 26.1.2 使用 KUI 的 `26.1` 目标名。1.20.1 构建进程使用 Java 21，编译工具链使用 Java 17。产物位于对应目标的 `build/libs`。
+各目标使用自己的 Gradle Wrapper。在目标目录执行 `./gradlew build`，Windows 使用 `gradlew.bat build`。Gradle 从 Sighs Maven 下载 `gradle.properties` 中指定的 KltytonUI 版本。Minecraft 26.1.2 使用 KUI 的 `26.1` 目标名。1.20.1 构建进程使用 Java 21，编译工具链使用 Java 17。产物位于对应目标的 `build/libs`。
 
 ## 致谢与许可
 

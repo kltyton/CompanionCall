@@ -49,7 +49,7 @@ tasks.named('processResources', ProcessResources) {
                minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
                loader_version: loader_version, loader_version_range: loader_version_range,
                fml_version_range: findProperty('fml_version_range') ?: '',
-               java_version: java_version]
+               java_version: java_version, kui_version: kui_version]
     def json = new JsonGenerator.Options().disableUnicodeEscaping().build()
     def escaped = raw.collectEntries { key, value ->
         def encoded = json.toJson(value.toString()).replace('\u007f', '\\u007f')

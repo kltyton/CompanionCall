@@ -12,7 +12,7 @@ description = "${mod_description}"
 [[dependencies.${mod_id}]]
 modId = "kltytonui"
 mandatory = true
-versionRange = "[1.2.7,)"
+versionRange = "[${kui_version},)"
 ordering = "AFTER"
 side = "BOTH"
 

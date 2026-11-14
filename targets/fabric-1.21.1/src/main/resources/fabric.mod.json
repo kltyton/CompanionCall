@@ -15,7 +15,7 @@
   "depends": {
     "fabric-api": "*",
     "forgeconfigapiport": "*",
-    "kltytonui": ">=1.2.7",
+    "kltytonui": ">=${kui_version}",
     "fabricloader": "${loader_version_range}",
     "minecraft": "=${minecraft_version}",
     "java": ">=${java_version}"
