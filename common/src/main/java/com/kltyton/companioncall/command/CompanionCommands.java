@@ -159,6 +159,7 @@ public final class CompanionCommands {
             }
         }
         runtime.recalls.cancel(entity.getUUID(), "not_owned");
+        runtime.mapOrders.cancel(entity.getUUID());
         CompanionCallApi.closeViewers(entity);
         runtime.observe(entity);
         runtime.persist();

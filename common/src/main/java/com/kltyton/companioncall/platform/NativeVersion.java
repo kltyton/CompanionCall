@@ -27,6 +27,8 @@ public final class NativeVersion {
     public static boolean canManage(CommandSourceStack source) { return VersionCalls.canManage(source); }
     public static CompoundTag previewSource(Entity entity) { return VersionCalls.previewSource(entity); }
     public static boolean isHorse(Entity entity) { return VersionCalls.isHorse(entity); }
+    public static boolean isBoat(Entity entity) { return VersionCalls.isBoat(entity); }
+    public static boolean isMinecart(Entity entity) { return VersionCalls.isMinecart(entity); }
     public static boolean canRide(Entity entity, ServerPlayer owner) { return VersionCalls.canRide(entity, owner); }
     public static boolean mount(Entity passenger, Entity vehicle, boolean force) { return VersionCalls.mount(passenger, vehicle, force); }
     public static Vec3 riderPosition(Entity vehicle, Entity passenger) { return VersionCalls.riderPosition(vehicle, passenger); }

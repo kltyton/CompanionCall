@@ -59,6 +59,7 @@ public final class NavigationSession {
     private long nextValidationTick;
     private boolean pendingGoalReplan;
     private boolean closed;
+    private boolean fixedGoal;
     private long pursuitTick = Long.MIN_VALUE;
     private Vec3 pursuitVelocity = Vec3.ZERO;
     private Vec3 pursuitPosition;
@@ -94,6 +95,23 @@ public final class NavigationSession {
     public NavigationProfile profile() { return profile; }
     public Vec3 goal() { return requestedGoal; }
     public NavigationStatus status() { return status; }
+
+    /** Queues a one-time destination for the same scheduler used by recall. */
+    public void requestFixed(Vec3 goal) {
+        requireServerThread();
+        if (closed || status != NavigationStatus.IDLE) throw new IllegalStateException("Session already used");
+        fixedGoal = true;
+        profile = profile.adaptTo(entity);
+        requestedGoal = Objects.requireNonNull(goal, "goal");
+        status = NavigationStatus.SEARCHING;
+        NavigationScheduler.wake(this);
+    }
+
+    public TravelMode fixedRouteMode() {
+        if (path.segments().isEmpty()) return null;
+        driver.updateCursor(entity.position(), path);
+        return driver.movementMode(this);
+    }
 
     public double remainingRouteDistance() {
         requireServerThread();
@@ -241,6 +259,7 @@ public final class NavigationSession {
     }
 
     private boolean tryArrive(Vec3 requested, long tick) {
+        if (fixedGoal && targetGoal != null) return arriveAt(targetGoal, targetMode);
         if (requested == null) return false;
         world.beginStep();
         NavigationGeometry.Resolution resolution = geometry.resolveGoal(profile, requested);
@@ -257,6 +276,15 @@ public final class NavigationSession {
         status = NavigationStatus.ARRIVED;
         clearPlanning();
         NavigationScheduler.forget(this);
+        return true;
+    }
+
+    private boolean arriveAt(Vec3 target, TravelMode mode) {
+        double radius = NavigationGeometry.arrivalRadius(mode);
+        if (entity.position().distanceToSqr(target) > radius * radius) return false;
+        world.beginStep();
+        if (geometry.arrivalClear(profile, entity.position(), target, mode) != CollisionWorld.Tri.CLEAR) return false;
+        terminate(NavigationStatus.ARRIVED);
         return true;
     }
 
@@ -596,6 +624,92 @@ public final class NavigationSession {
         return driver.followRoute(this, mob, speed);
     }
 
+    /** Follows the same validated route for boats, occupied mounts and flight segments. */
+    public boolean driveFixedEntity() {
+        requireServerThread();
+        long tick = server.getTickCount();
+        if (!fixedGoal || !tickLifecycle(tick)) return false;
+        NavigationProfile adapted = profile.adaptTo(entity);
+        if (!profile.sameAs(adapted)) {
+            profile = adapted;
+            if (status == NavigationStatus.MOVING) {
+                path = NavigationPath.empty();
+                beginReplan(tick);
+            }
+        }
+        if (status == NavigationStatus.WAITING_REGION && search == null && !path.isEmpty()) validateAhead(tick, true);
+        if (status != NavigationStatus.MOVING) return false;
+        validateAhead(tick, false);
+        if (status != NavigationStatus.MOVING || path.isEmpty()) return false;
+        if (arriveAt(targetGoal, targetMode)) return false;
+
+        Vec3 from = entity.position();
+        driver.updateCursor(from, path);
+        NavigationPath.Segment segment = path.segments().isEmpty() ? null : path.segments().get(driver.cursorSegment());
+        if (segment == null || from.distanceToSqr(segment.to()) <= EPS) {
+            if (!canMoveDirectlyTo(targetGoal)) {
+                beginReplan(tick);
+                return false;
+            }
+            var kind = NavigationGeometry.kindForMode(profile, from, targetGoal, targetMode);
+            if (kind == null) {
+                beginReplan(tick);
+                return false;
+            }
+            segment = new NavigationPath.Segment(from, targetGoal, kind);
+        }
+        Vec3 end = segment.to();
+        TravelMode mode = modeOf(segment);
+        double remaining = Math.max(0, path.length() - driver.routeCursor());
+        double speed = (mode == TravelMode.WATER ? .25 : .32)
+                * (1 + Math.min(1, Math.max(0, (remaining - 8) / 80)));
+        Vec3 steering = end;
+        if (segment.kind() == NavigationPath.Kind.STEP_UP || segment.kind() == NavigationPath.Kind.JUMP) {
+            if (from.y < end.y - EPS) steering = new Vec3(from.x, end.y, from.z);
+        } else if (segment.kind() == NavigationPath.Kind.DROP && from.y > end.y + EPS
+                && from.subtract(end).horizontalDistanceSqr() > .01) {
+            steering = new Vec3(end.x, from.y, end.z);
+        }
+        Vec3 delta = steering.subtract(from);
+        double distance = delta.length();
+        if (distance <= EPS) {
+            beginReplan(tick);
+            return false;
+        }
+        Vec3 movement = delta.scale(Math.min(speed, distance) / distance);
+        world.beginStep();
+        Vec3 next = from.add(movement);
+        var clearance = switch (segment.kind()) {
+            case WALK -> geometry.validateDirect(profile, from, next, NavigationPath.Kind.WALK);
+            case SWIM -> world.waterSegmentClear(from, next, profile);
+            default -> world.segmentClear(from, next, profile);
+        };
+        if (clearance != CollisionWorld.Tri.CLEAR) {
+            beginReplan(tick);
+            return false;
+        }
+        NativeVersion.synchronizeMovement(entity);
+        if (movement.horizontalDistanceSqr() > EPS) {
+            entity.setYRot((float) (Math.toDegrees(Math.atan2(movement.z, movement.x)) - 90));
+        }
+        entity.move(MoverType.SELF, movement);
+        if (entity.position().distanceToSqr(from) <= EPS) {
+            beginReplan(tick);
+        } else {
+            updatePassengerPositions(entity);
+        }
+        return true;
+    }
+
+    private static void updatePassengerPositions(Entity vehicle) {
+        for (Entity passenger : vehicle.getPassengers()) {
+            if (passenger.getVehicle() == vehicle) {
+                vehicle.positionRider(passenger);
+                updatePassengerPositions(passenger);
+            }
+        }
+    }
+
     public void cancel() {
         requireServerThread();
         terminate(NavigationStatus.CANCELLED);
@@ -729,6 +843,7 @@ public final class NavigationSession {
             terminate(NavigationStatus.NO_ROUTE_IN_REGION);
             return false;
         }
+        if (fixedGoal && arriveAt(goal.point, goal.mode)) return false;
         partialGoal = false;
         partialExhausted = false;
         NavigationPath prefix = preservePrefix ? safePrefix() : NavigationPath.empty();
@@ -946,7 +1061,7 @@ public final class NavigationSession {
     NavigationProfile profileView() { return profile; }
     CollisionWorld worldView() { return world; }
     NavigationGeometry geometryView() { return geometry; }
-    Vec3 requestedGoalView() { return requestedGoal; }
+    Vec3 routeGoalView() { return fixedGoal && targetGoal != null ? targetGoal : requestedGoal; }
     TravelMode targetModeView() { return targetModeOrPrimary(); }
     long serverTick() { return server.getTickCount(); }
     boolean tryArriveInternal(long tick) { return tryArrive(requestedGoal, tick); }

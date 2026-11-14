@@ -24,6 +24,9 @@ public interface PetAdapter {
 
     Set<TravelMode> travelModes(Entity entity);
 
+    /** Fixed map orders can declare a narrower envelope than emergency recall. */
+    default Set<TravelMode> mapTravelModes(Entity entity) { return travelModes(entity); }
+
     boolean isSitting(Entity entity);
 
     void stand(Entity entity);

@@ -66,6 +66,8 @@ public final class VersionCalls {
     public static String dimension(Level level) { return level.dimension().location().toString(); }
     public static ResourceKey<Level> levelKey(String name) { return ResourceKey.create(Registries.DIMENSION, id(name)); }
     public static boolean isHorse(Entity entity) { return entity instanceof AbstractHorse; }
+    public static boolean isBoat(Entity entity) { return entity instanceof net.minecraft.world.entity.vehicle.Boat; }
+    public static boolean isMinecart(Entity entity) { return entity instanceof net.minecraft.world.entity.vehicle.AbstractMinecart; }
     public static CompoundTag previewSource(Entity entity) { return entity.saveWithoutId(new CompoundTag()); }
     public static boolean mount(Entity passenger, Entity vehicle, boolean force) { return passenger.startRiding(vehicle, force); }
     public static Vec3 riderPosition(Entity vehicle, Entity passenger) {

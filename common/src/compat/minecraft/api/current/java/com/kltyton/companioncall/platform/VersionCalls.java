@@ -72,6 +72,8 @@ public final class VersionCalls {
     public static String dimension(Level level) { return level.dimension().identifier().toString(); }
     public static ResourceKey<Level> levelKey(String name) { return ResourceKey.create(Registries.DIMENSION, id(name)); }
     public static boolean isHorse(Entity entity) { return entity instanceof AbstractHorse; }
+    public static boolean isBoat(Entity entity) { return entity instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat; }
+    public static boolean isMinecart(Entity entity) { return entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart; }
     public static CompoundTag previewSource(Entity entity) {
         try (var reporter = new ProblemReporter.ScopedCollector(entity.problemPath(), CompanionCall.LOGGER)) {
             var output = TagValueOutput.createWithContext(reporter, entity.registryAccess());

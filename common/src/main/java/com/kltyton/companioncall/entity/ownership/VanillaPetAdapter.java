@@ -27,7 +27,11 @@ public final class VanillaPetAdapter implements PetAdapter {
     @Override public UUID owner(Entity entity) { return NativeVersion.owner(entity); }
 
     @Override public Set<TravelMode> travelModes(Entity entity) {
-        var navigation = ((Mob) entity).getNavigation();
+        return nativeTravelModes((Mob) entity);
+    }
+
+    static Set<TravelMode> nativeTravelModes(Mob entity) {
+        var navigation = entity.getNavigation();
         if (navigation instanceof FlyingPathNavigation) return EnumSet.of(TravelMode.LAND, TravelMode.AIR);
         if (navigation instanceof AmphibiousPathNavigation) return EnumSet.of(TravelMode.LAND, TravelMode.WATER);
         if (navigation instanceof WaterBoundPathNavigation) return EnumSet.of(TravelMode.WATER);

@@ -78,6 +78,8 @@ public final class RecallService implements AutoCloseable {
 
     public String status(UUID owner) { return statuses.getOrDefault(owner, "ready"); }
 
+    public boolean isActive(UUID pet) { return active.containsKey(pet); }
+
     public void status(ServerPlayer owner, String status) {
         statuses.put(owner.getUUID(), status);
         runtime.sync(owner);
@@ -125,6 +127,7 @@ public final class RecallService implements AutoCloseable {
             runtime.index.select(owner.getUUID(), selected);
             runtime.persist();
         }
+        runtime.mapOrders.cancel(selected);
         active.put(selected, request);
         activeOwners.put(request.owner, request);
         CompanionCall.LOGGER.debug("Recall accepted for pet {}, force={}", selected, forceTransfer);

@@ -6,7 +6,7 @@ import java.util.Set;
 import java.util.UUID;
 
 public record ClientSnapshot(int holdMillis, UUID selected, String status, List<PetRecord> pets, Set<UUID> loaded,
-                             List<PetRecord> blocked, PetRecord ridden) {
+                             List<PetRecord> blocked, PetRecord ridden, int mapProtocol) {
     public ClientSnapshot {
         if (holdMillis <= 0 || status == null || pets == null || loaded == null) {
             throw new IllegalArgumentException("Incomplete companion state");
@@ -18,5 +18,5 @@ public record ClientSnapshot(int holdMillis, UUID selected, String status, List<
             throw new IllegalArgumentException("Selected companion is absent from synchronized state");
         }
     }
-    public static ClientSnapshot awaiting() { return new ClientSnapshot(300, null, "syncing", List.of(), Set.of(), List.of(), null); }
+    public static ClientSnapshot awaiting() { return new ClientSnapshot(300, null, "syncing", List.of(), Set.of(), List.of(), null, 0); }
 }

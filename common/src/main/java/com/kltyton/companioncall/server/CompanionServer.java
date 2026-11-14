@@ -11,9 +11,11 @@ import com.kltyton.companioncall.config.RecallConfig;
 import com.kltyton.companioncall.config.CompanionConfigSpec;
 import com.kltyton.companioncall.entity.appearance.PetAppearance;
 import com.kltyton.companioncall.network.payload.ServerSnapshot;
+import com.kltyton.companioncall.network.map.CompanionMapProtocol;
 import com.kltyton.companioncall.navigation.NavigationScheduler;
 import com.kltyton.companioncall.platform.NativeVersion;
 import com.kltyton.companioncall.server.recall.RecallService;
+import com.kltyton.companioncall.server.map.CompanionMapService;
 import com.kltyton.companioncall.storage.RecallStore;
 import com.kltyton.companioncall.storage.pet.PetIndex;
 import com.kltyton.companioncall.storage.pet.PetRecord;
@@ -40,6 +42,7 @@ public final class CompanionServer implements AutoCloseable {
     public final PetIndex index;
     public final TransferCoordinator transfers;
     public final RecallService recalls;
+    public final CompanionMapService mapOrders;
     private final RecallStore store;
     private final Map<UUID, Long> protections = new HashMap<>();
     private final Map<UUID, Long> sentRevision = new HashMap<>();
@@ -59,6 +62,7 @@ public final class CompanionServer implements AutoCloseable {
             protections.putAll(snapshot.protections());
             transfers = new TransferCoordinator(this, snapshot.transfers());
             recalls = new RecallService(this);
+            mapOrders = new CompanionMapService(this);
         } catch (IOException error) {
             throw new UncheckedIOException("Cannot open companion recall data", error);
         }
@@ -107,6 +111,7 @@ public final class CompanionServer implements AutoCloseable {
         ticks++;
         transfers.tick();
         recalls.tick();
+        mapOrders.tick();
         NavigationScheduler.tick(server);
         if (ticks % 20 == 0) {
             for (var level : server.getAllLevels()) for (var entity : level.getAllEntities()) observe(entity);
@@ -117,6 +122,7 @@ public final class CompanionServer implements AutoCloseable {
             sentRevision.keySet().removeIf(id -> server.getPlayerList().getPlayer(id) == null);
             appearanceRefresh.keySet().removeIf(id -> server.getPlayerList().getPlayer(id) == null);
             riddenPreviews.keySet().removeIf(id -> server.getPlayerList().getPlayer(id) == null);
+            mapOrders.pruneRequests();
             if (persistedRevision != index.revision()) persist();
         }
     }
@@ -140,6 +146,7 @@ public final class CompanionServer implements AutoCloseable {
         index.unbind(entity.getUUID());
         index.invalidate(entity.getUUID());
         recalls.cancel(entity.getUUID(), "dead");
+        mapOrders.cancel(entity.getUUID());
         persist();
     }
 
@@ -154,6 +161,8 @@ public final class CompanionServer implements AutoCloseable {
 
     public void request(ServerPlayer player, String action, String id) {
         switch (action) {
+            case CompanionMapProtocol.LIST -> mapOrders.list(player, id);
+            case CompanionMapProtocol.MOVE -> mapOrders.move(player, id);
             case "refresh" -> {
                 long now = gameTime();
                 // Full visual serialization is limited to one explicit refresh per owner per second.
@@ -191,7 +200,10 @@ public final class CompanionServer implements AutoCloseable {
                         recalls.status(player, "not_owned");
                         return;
                     }
-                    if ("blacklist".equals(action)) recalls.cancel(entityId, "blacklisted");
+                    if ("blacklist".equals(action)) {
+                        recalls.cancel(entityId, "blacklisted");
+                        mapOrders.cancel(entityId);
+                    }
                     persist();
                     recalls.status(player, "blacklist".equals(action) ? "blacklisted" : "restored");
                 } catch (IllegalArgumentException error) {
@@ -216,7 +228,7 @@ public final class CompanionServer implements AutoCloseable {
 
     public void sync(ServerPlayer player) {
         record State(int holdMillis, UUID selected, String status, java.util.List<PetRecord> pets,
-                     java.util.Set<UUID> loaded, java.util.List<PetRecord> blocked, PetRecord ridden) {}
+                     java.util.Set<UUID> loaded, java.util.List<PetRecord> blocked, PetRecord ridden, int mapProtocol) {}
         var pets = index.owned(player.getUUID());
         var blocked = index.blocked(player.getUUID());
         var loaded = new java.util.HashSet<UUID>();
@@ -234,7 +246,8 @@ public final class CompanionServer implements AutoCloseable {
             loaded.add(ridden.getUUID());
         }
         new ServerSnapshot(GSON.toJson(new State(config.holdMillis(), index.selected(player.getUUID()),
-                recalls.status(player.getUUID()), pets, loaded, blocked, riddenRecord))).sendTo(player);
+                recalls.status(player.getUUID()), pets, loaded, blocked, riddenRecord,
+                CompanionMapProtocol.VERSION))).sendTo(player);
         sentRevision.put(player.getUUID(), index.revision());
     }
 
@@ -274,6 +287,7 @@ public final class CompanionServer implements AutoCloseable {
             }
         }
         recalls.cancel(entity.getUUID(), "owner_changed");
+        mapOrders.cancel(entity.getUUID());
         captureAppearance(entity);
         index.blacklist(player.getUUID(), entity.getUUID(), false);
         index.select(player.getUUID(), entity.getUUID());
@@ -287,6 +301,7 @@ public final class CompanionServer implements AutoCloseable {
     }
 
     @Override public void close() {
+        mapOrders.close();
         recalls.close();
         transfers.close();
         NavigationScheduler.close(server);

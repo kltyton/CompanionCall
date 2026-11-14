@@ -16,6 +16,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.TamableAnimal;
 
 /** Explicit player bindings provide recall authority without inventing a native tameable owner. */
@@ -49,6 +50,13 @@ public final class BoundEntityAdapter implements PetAdapter {
 
     @Override public Set<TravelMode> travelModes(Entity entity) {
         return EnumSet.allOf(TravelMode.class);
+    }
+
+    @Override public Set<TravelMode> mapTravelModes(Entity entity) {
+        if (NativeVersion.isBoat(entity)) return EnumSet.of(TravelMode.LAND, TravelMode.WATER);
+        if (NativeVersion.isMinecart(entity)) return Set.of();
+        if (entity instanceof Mob mob) return VanillaPetAdapter.nativeTravelModes(mob);
+        return EnumSet.of(TravelMode.LAND);
     }
 
     @Override public boolean isSitting(Entity entity) {

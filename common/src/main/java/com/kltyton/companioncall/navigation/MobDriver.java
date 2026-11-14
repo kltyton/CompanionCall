@@ -143,7 +143,7 @@ public final class MobDriver {
         long tick = session.serverTick();
         updateCursor(position, path);
 
-        Vec3 requested = session.requestedGoalView();
+        Vec3 requested = session.routeGoalView();
         if (requested != null) {
             double arrival = NavigationGeometry.arrivalRadius(session.targetModeView());
             if (position.distanceToSqr(requested) <= arrival * arrival
@@ -197,7 +197,7 @@ public final class MobDriver {
     }
 
     boolean driveDirect(NavigationSession session, Mob mob, double speed) {
-        Vec3 requested = session.requestedGoalView();
+        Vec3 requested = session.routeGoalView();
         if (requested == null) return false;
         NavigationProfile profile = session.profileView();
         double centerY = (profile.localMinY() + profile.localMaxY()) * 0.5;

@@ -4,12 +4,14 @@ import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
 import com.kltyton.companioncall.CompanionCall;
 import com.kltyton.companioncall.client.input.ClientAccess;
+import com.kltyton.companioncall.client.map.CompanionMapState;
 import com.kltyton.companioncall.client.preview.CompanionPreview;
 import com.kltyton.companioncall.client.screen.CompanionSelector;
 import com.kltyton.companioncall.config.client.ClientOptions;
 import com.kltyton.companioncall.storage.pet.PetRecord;
 import com.kltyton.companioncall.network.payload.ClientRequest;
 import com.kltyton.companioncall.network.payload.ServerSnapshot;
+import com.kltyton.companioncall.network.map.CompanionMapProtocol;
 import io.github.kltyton.kltytonui.KltytonUI;
 import io.github.kltyton.kltytonui.init.Document;
 import java.util.LinkedHashMap;
@@ -60,10 +62,15 @@ public final class CompanionClient {
     }
 
     private static void receive(String json) {
+        if (CompanionMapProtocol.isSnapshot(json)) {
+            CompanionMapState.receive(json);
+            return;
+        }
         try {
             var updated = GSON.fromJson(json, ClientSnapshot.class);
             if (updated == null) throw new IllegalArgumentException("Empty companion state");
             snapshot = updated;
+            CompanionMapState.advertise(updated.mapProtocol());
             refreshPreviews();
             syncError = false;
         } catch (JsonParseException | IllegalArgumentException error) {
@@ -76,6 +83,7 @@ public final class CompanionClient {
 
     public static void tick() {
         if (!initialized) return;
+        CompanionMapState.tick();
         int clicks = 0;
         while (ClientAccess.KEY.consumeClick()) clicks++;
         int addClicks = 0;
@@ -85,6 +93,7 @@ public final class CompanionClient {
             cancelGesture();
             if (hud != null) { hud.remove(); hud = null; }
             connection = null;
+            CompanionMapState.advertise(0);
             snapshot = ClientSnapshot.awaiting();
             documentSnapshot = null;
             documentLanguage = null;
