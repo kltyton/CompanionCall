@@ -32,10 +32,18 @@ public final class VanillaPetAdapter implements PetAdapter {
 
     static Set<TravelMode> nativeTravelModes(Mob entity) {
         var navigation = entity.getNavigation();
-        if (navigation instanceof FlyingPathNavigation) return EnumSet.of(TravelMode.LAND, TravelMode.AIR);
+        if (hasNativeFlight(entity)) return EnumSet.of(TravelMode.LAND, TravelMode.AIR);
         if (navigation instanceof AmphibiousPathNavigation) return EnumSet.of(TravelMode.LAND, TravelMode.WATER);
         if (navigation instanceof WaterBoundPathNavigation) return EnumSet.of(TravelMode.WATER);
         return EnumSet.of(TravelMode.LAND);
+    }
+
+    static boolean hasNativeFlight(Mob entity) {
+        return entity.getNavigation() instanceof FlyingPathNavigation;
+    }
+
+    @Override public boolean isFlying(Entity entity) {
+        return !entity.onGround() && PetAdapter.super.isFlying(entity);
     }
 
     @Override public boolean isSitting(Entity entity) {

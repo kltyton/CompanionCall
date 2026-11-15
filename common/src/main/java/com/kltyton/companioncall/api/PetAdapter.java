@@ -27,6 +27,12 @@ public interface PetAdapter {
     /** Fixed map orders can declare a narrower envelope than emergency recall. */
     default Set<TravelMode> mapTravelModes(Entity entity) { return travelModes(entity); }
 
+    /**
+     * Reports the active flight phase for an AIR-capable companion. Override if the companion's
+     * controller signals flight independently of the entity's gravity flag.
+     */
+    default boolean isFlying(Entity entity) { return entity.isNoGravity(); }
+
     boolean isSitting(Entity entity);
 
     void stand(Entity entity);

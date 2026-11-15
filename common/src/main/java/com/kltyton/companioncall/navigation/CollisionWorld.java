@@ -4,14 +4,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
@@ -59,6 +59,16 @@ final class CollisionWorld {
         }
     }
 
+    static final class GroundResult {
+        final Tri status;
+        final Vec3 point;
+
+        GroundResult(Tri status, Vec3 point) {
+            this.status = status;
+            this.point = point;
+        }
+    }
+
     static final class FluidResult {
         final Tri status;
         final boolean water;
@@ -83,14 +93,20 @@ final class CollisionWorld {
         }
     }
 
+    private record GroundProbe(double x, double y, double z, double minX, double minY,
+                               double minZ, double maxX, double maxY, double maxZ) {}
+
     private static final double EPS = 1.0E-7;
     private static final double TOUCH = 1.0E-4;
+    private static final double MAX_SWEEP_SPAN = 6.0;
+    private static final double TREE_GROUND_SEARCH_DEPTH = 24.0;
 
     private final ServerLevel level;
     private final CollisionContext context;
     private final int minY;
     private final int maxYExclusive;
     private final Map<BlockPos, Cell> cells = new HashMap<>();
+    private final Map<GroundProbe, GroundResult> groundDestinations = new HashMap<>();
     private Entity approachObstacle;
 
     CollisionWorld(ServerLevel level, Entity entity) {
@@ -103,6 +119,7 @@ final class CollisionWorld {
 
     void beginStep() {
         cells.clear();
+        groundDestinations.clear();
     }
 
     void approachObstacle(Entity obstacle) {
@@ -174,8 +191,7 @@ final class CollisionWorld {
             if (segmentIntersects(expanded, from, to)
                     && !exitsOutward(expanded, from, to)) return Tri.BLOCKED;
         }
-        AABB sweep = union(fromBox, toBox).inflate(0.01);
-        BoxSet set = segmentBoxes(from, to, profile, sweep);
+        BoxSet set = sweptCollisionBoxes(from, to, profile);
         if (set.status != Tri.CLEAR) return set.status;
         for (AABB box : set.boxes) {
             AABB expanded = new AABB(box.minX - profile.localMaxX(),
@@ -202,104 +218,19 @@ final class CollisionWorld {
                 || to.z >= box.maxZ && from.z >= (box.minZ + box.maxZ) * .5;
     }
 
-    private BoxSet segmentBoxes(Vec3 from, Vec3 to, NavigationProfile profile, AABB sweep) {
-        if (from.distanceToSqr(to) <= 9.0) return collisionBoxes(sweep);
-        Set<BlockPos> candidates = sweepCandidates(from, to, profile);
-        if (!corridorChunksLoaded(candidates)) {
-            return new BoxSet(Tri.UNKNOWN, Collections.emptyList());
+    private BoxSet sweptCollisionBoxes(Vec3 from, Vec3 to, NavigationProfile profile) {
+        int spans = Math.max(1, (int) Math.ceil(from.distanceTo(to) / MAX_SWEEP_SPAN));
+        List<AABB> result = new ArrayList<>();
+        Vec3 start = from;
+        for (int index = 1; index <= spans; index++) {
+            Vec3 end = index == spans ? to : from.lerp(to, index / (double) spans);
+            AABB sweep = union(profile.boxAt(start), profile.boxAt(end)).inflate(0.01);
+            BoxSet boxes = collisionBoxes(sweep);
+            if (boxes.status != Tri.CLEAR) return boxes;
+            result.addAll(boxes.boxes);
+            start = end;
         }
-        List<AABB> boxes = new ArrayList<>();
-        for (BlockPos pos : candidates) {
-            for (AABB box : cell(pos).boxes) {
-                if (box.intersects(sweep)) boxes.add(box);
-            }
-        }
-        return new BoxSet(Tri.CLEAR, boxes);
-    }
-
-    private Set<BlockPos> sweepCandidates(Vec3 from, Vec3 to, NavigationProfile profile) {
-        Set<BlockPos> blocks = new HashSet<>();
-        int x = floor(from.x);
-        int y = floor(from.y);
-        int z = floor(from.z);
-        int endX = floor(to.x);
-        int endY = floor(to.y);
-        int endZ = floor(to.z);
-        double dx = to.x - from.x;
-        double dy = to.y - from.y;
-        double dz = to.z - from.z;
-        int stepX = dx > 0.0 ? 1 : dx < 0.0 ? -1 : 0;
-        int stepY = dy > 0.0 ? 1 : dy < 0.0 ? -1 : 0;
-        int stepZ = dz > 0.0 ? 1 : dz < 0.0 ? -1 : 0;
-        double maxX = stepX == 0 ? Double.POSITIVE_INFINITY
-                : ((stepX > 0 ? x + 1 : x) - from.x) / dx;
-        double maxY = stepY == 0 ? Double.POSITIVE_INFINITY
-                : ((stepY > 0 ? y + 1 : y) - from.y) / dy;
-        double maxZ = stepZ == 0 ? Double.POSITIVE_INFINITY
-                : ((stepZ > 0 ? z + 1 : z) - from.z) / dz;
-        double deltaX = stepX == 0 ? Double.POSITIVE_INFINITY : 1.0 / Math.abs(dx);
-        double deltaY = stepY == 0 ? Double.POSITIVE_INFINITY : 1.0 / Math.abs(dy);
-        double deltaZ = stepZ == 0 ? Double.POSITIVE_INFINITY : 1.0 / Math.abs(dz);
-        int guard = (Math.abs(endX - x) + Math.abs(endY - y) + Math.abs(endZ - z)) * 3 + 32;
-        while (guard-- > 0) {
-            addSweepBlocks(blocks, x, y, z, profile);
-            if (x == endX && y == endY && z == endZ) break;
-            double next = Math.min(maxX, Math.min(maxY, maxZ));
-            boolean moved = false;
-            if (maxX <= next + EPS) {
-                x += stepX;
-                maxX += deltaX;
-                moved = true;
-            }
-            if (maxY <= next + EPS) {
-                y += stepY;
-                maxY += deltaY;
-                moved = true;
-            }
-            if (maxZ <= next + EPS) {
-                z += stepZ;
-                maxZ += deltaZ;
-                moved = true;
-            }
-            if (!moved) break;
-        }
-        return blocks;
-    }
-
-    private void addSweepBlocks(Set<BlockPos> blocks, int cellX, int cellY, int cellZ,
-                                NavigationProfile profile) {
-        int minX = floor(cellX + profile.localMinX() - EPS) - 1;
-        int maxX = floor(cellX + 1.0 + profile.localMaxX() + EPS) + 1;
-        int minYBox = Math.max(minY,
-                floor(cellY + profile.localMinY() - EPS) - 1);
-        int maxYBox = Math.min(maxYExclusive - 1,
-                floor(cellY + 1.0 + profile.localMaxY() + EPS) + 1);
-        int minZ = floor(cellZ + profile.localMinZ() - EPS) - 1;
-        int maxZ = floor(cellZ + 1.0 + profile.localMaxZ() + EPS) + 1;
-        for (int bx = minX; bx <= maxX; bx++) {
-            for (int by = minYBox; by <= maxYBox; by++) {
-                for (int bz = minZ; bz <= maxZ; bz++) {
-                    blocks.add(new BlockPos(bx, by, bz));
-                }
-            }
-        }
-    }
-
-    private boolean corridorChunksLoaded(Set<BlockPos> blocks) {
-        Set<Long> chunks = new HashSet<>();
-        for (BlockPos pos : blocks) {
-            int minCX = (pos.getX() - 2) >> 4;
-            int maxCX = (pos.getX() + 2) >> 4;
-            int minCZ = (pos.getZ() - 2) >> 4;
-            int maxCZ = (pos.getZ() + 2) >> 4;
-            for (int cx = minCX; cx <= maxCX; cx++) {
-                for (int cz = minCZ; cz <= maxCZ; cz++) {
-                    long key = ((long) cx << 32) ^ (cz & 0xffffffffL);
-                    if (chunks.add(key) && !level.hasChunk(cx, cz)) return false;
-                }
-            }
-        }
-        return true;
+        return new BoxSet(Tri.CLEAR, result);
     }
 
     Tri stepClear(Vec3 from, Vec3 to, NavigationProfile profile) {
@@ -367,13 +298,8 @@ final class CollisionWorld {
     Tri groundedSegmentResult(Vec3 from, Vec3 to, NavigationProfile profile) {
         requireServerThread();
         if (Math.abs(from.y - to.y) > 0.01) return Tri.BLOCKED;
-        double minX = Math.min(from.x, to.x) + profile.localMinX() - 0.01;
-        double maxX = Math.max(from.x, to.x) + profile.localMaxX() + 0.01;
-        double minZ = Math.min(from.z, to.z) + profile.localMinZ() - 0.01;
-        double maxZ = Math.max(from.z, to.z) + profile.localMaxZ() + 0.01;
         double supportY = from.y + profile.localMinY();
-        AABB query = new AABB(minX, supportY - 0.03, minZ, maxX, supportY + 0.03, maxZ);
-        BoxSet set = collisionBoxes(query);
+        BoxSet set = groundedCollisionBoxes(from, to, profile, supportY);
         if (set.status != Tri.CLEAR) return set.status;
         List<double[]> intervals = new ArrayList<>();
         for (AABB box : set.boxes) {
@@ -397,6 +323,102 @@ final class CollisionWorld {
             if (covered >= 1.0 - EPS) return Tri.CLEAR;
         }
         return covered >= 1.0 - 0.001 ? Tri.CLEAR : Tri.BLOCKED;
+    }
+
+    private BoxSet groundedCollisionBoxes(Vec3 from, Vec3 to, NavigationProfile profile,
+                                          double supportY) {
+        double horizontal = Math.sqrt(from.subtract(to).horizontalDistanceSqr());
+        int spans = Math.max(1, (int) Math.ceil(horizontal / MAX_SWEEP_SPAN));
+        List<AABB> result = new ArrayList<>();
+        Vec3 start = from;
+        for (int index = 1; index <= spans; index++) {
+            Vec3 end = index == spans ? to : from.lerp(to, index / (double) spans);
+            double minX = Math.min(start.x, end.x) + profile.localMinX() - 0.01;
+            double maxX = Math.max(start.x, end.x) + profile.localMaxX() + 0.01;
+            double minZ = Math.min(start.z, end.z) + profile.localMinZ() - 0.01;
+            double maxZ = Math.max(start.z, end.z) + profile.localMaxZ() + 0.01;
+            BoxSet boxes = collisionBoxes(new AABB(minX, supportY - 0.03, minZ,
+                    maxX, supportY + 0.03, maxZ));
+            if (boxes.status != Tri.CLEAR) return boxes;
+            result.addAll(boxes.boxes);
+            start = end;
+        }
+        return new BoxSet(Tri.CLEAR, result);
+    }
+
+    GroundResult groundDestination(Vec3 selected, NavigationProfile profile) {
+        GroundProbe probe = new GroundProbe(selected.x, selected.y, selected.z,
+                profile.localMinX(), profile.localMinY(), profile.localMinZ(),
+                profile.localMaxX(), profile.localMaxY(), profile.localMaxZ());
+        GroundResult cached = groundDestinations.get(probe);
+        if (cached != null) return cached;
+        GroundResult result = findGroundDestination(selected, profile);
+        groundDestinations.put(probe, result);
+        return result;
+    }
+
+    private GroundResult findGroundDestination(Vec3 selected, NavigationProfile profile) {
+        BlockPos canopy = new BlockPos(floor(selected.x), floor(selected.y - EPS), floor(selected.z));
+        if (!hasChunk(canopy)) return new GroundResult(Tri.UNKNOWN, null);
+        if (!isTreeCanopy(canopy)) return new GroundResult(Tri.CLEAR, null);
+
+        boolean unknown = false;
+        int[][] offsets = {
+                { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
+                { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 }
+        };
+        for (int[] offset : offsets) {
+            GroundResult ground = groundBelow(selected.add(offset[0], 0, offset[1]), profile);
+            if (ground.status == Tri.UNKNOWN) {
+                unknown = true;
+            } else if (ground.point != null) {
+                return ground;
+            }
+        }
+        return new GroundResult(unknown ? Tri.UNKNOWN : Tri.CLEAR, null);
+    }
+
+    private GroundResult groundBelow(Vec3 selected, NavigationProfile profile) {
+        double minFeet = selected.y - TREE_GROUND_SEARCH_DEPTH;
+        AABB probe = new AABB(selected.x + profile.localMinX(), minFeet + profile.localMinY() - .05,
+                selected.z + profile.localMinZ(), selected.x + profile.localMaxX(),
+                selected.y + profile.localMinY() + .05, selected.z + profile.localMaxZ());
+        BoxSet boxes = collisionBoxes(probe);
+        if (boxes.status != Tri.CLEAR) return new GroundResult(boxes.status, null);
+
+        Vec3 best = null;
+        for (AABB box : boxes.boxes) {
+            if (!overlapsFootprint(box, selected.x, selected.z, profile)) continue;
+            double feetY = box.maxY - profile.localMinY();
+            if (feetY >= selected.y - EPS || feetY < minFeet) continue;
+            BlockPos support = new BlockPos(floor(selected.x), floor(feetY - EPS), floor(selected.z));
+            if (!hasChunk(support) || !hasChunk(support.below())) {
+                return new GroundResult(Tri.UNKNOWN, null);
+            }
+            if (!stableGround(support)) continue;
+            Tri body = bodyClear(new Vec3(selected.x, feetY, selected.z), profile);
+            if (body == Tri.UNKNOWN) return new GroundResult(Tri.UNKNOWN, null);
+            if (body == Tri.CLEAR && (best == null || feetY > best.y)) {
+                best = new Vec3(selected.x, feetY, selected.z);
+            }
+        }
+        return new GroundResult(Tri.CLEAR, best);
+    }
+
+    private boolean isTreeCanopy(BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        return state.is(BlockTags.LEAVES)
+                || state.is(Blocks.SNOW) && level.getBlockState(pos.below()).is(BlockTags.LEAVES);
+    }
+
+    private boolean stableGround(BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        if (state.is(Blocks.SNOW)) state = level.getBlockState(pos.below());
+        return !state.isAir() && !state.is(BlockTags.LEAVES) && !state.is(BlockTags.LOGS);
+    }
+
+    private boolean hasChunk(BlockPos pos) {
+        return level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4);
     }
 
     CenterResult horizontalCandidates(int blockX, int blockZ, double feetY,
@@ -596,44 +618,21 @@ final class CollisionWorld {
         double dx = to.x - from.x;
         double dy = to.y - from.y;
         double dz = to.z - from.z;
-        if (Math.abs(dx) < EPS && Math.abs(dy) < EPS && Math.abs(dz) < EPS) {
-            return from.x > box.minX + EPS && from.x < box.maxX - EPS
-                    && from.y > box.minY + EPS && from.y < box.maxY - EPS
-                    && from.z > box.minZ + EPS && from.z < box.maxZ - EPS;
-        }
-        double t0 = 0.0;
-        double t1 = 1.0;
-        double[] interval = new double[2];
-        if (!slab(from.x, dx, box.minX, box.maxX, interval)) return false;
-        t0 = Math.max(t0, interval[0]);
-        t1 = Math.min(t1, interval[1]);
-        if (!slab(from.y, dy, box.minY, box.maxY, interval)) return false;
-        t0 = Math.max(t0, interval[0]);
-        t1 = Math.min(t1, interval[1]);
-        if (!slab(from.z, dz, box.minZ, box.maxZ, interval)) return false;
-        t0 = Math.max(t0, interval[0]);
-        t1 = Math.min(t1, interval[1]);
-        return t0 < t1 - EPS && t1 > EPS && t0 < 1.0 - EPS;
-    }
+        if ((dx == 0 && (from.x <= box.minX || from.x >= box.maxX))
+                || (dy == 0 && (from.y <= box.minY || from.y >= box.maxY))
+                || (dz == 0 && (from.z <= box.minZ || from.z >= box.maxZ))) return false;
 
-    private static boolean slab(double origin, double direction, double min, double max,
-                                double[] result) {
-        if (Math.abs(direction) < EPS) {
-            if (origin <= min + EPS || origin >= max - EPS) return false;
-            result[0] = 0.0;
-            result[1] = 1.0;
-            return true;
-        }
-        double t0 = (min - origin) / direction;
-        double t1 = (max - origin) / direction;
-        if (t0 > t1) {
-            double swap = t0;
-            t0 = t1;
-            t1 = swap;
-        }
-        result[0] = t0;
-        result[1] = t1;
-        return true;
+        // The bounds already carry the spatial tolerance. An epsilon on the time interval
+        // would discard real overlaps as the length of the swept segment increases.
+        double enterX = dx == 0 ? 0 : ((dx > 0 ? box.minX : box.maxX) - from.x) / dx;
+        double leaveX = dx == 0 ? 1 : ((dx > 0 ? box.maxX : box.minX) - from.x) / dx;
+        double enterY = dy == 0 ? 0 : ((dy > 0 ? box.minY : box.maxY) - from.y) / dy;
+        double leaveY = dy == 0 ? 1 : ((dy > 0 ? box.maxY : box.minY) - from.y) / dy;
+        double enterZ = dz == 0 ? 0 : ((dz > 0 ? box.minZ : box.maxZ) - from.z) / dz;
+        double leaveZ = dz == 0 ? 1 : ((dz > 0 ? box.maxZ : box.minZ) - from.z) / dz;
+        double enter = Math.max(0, Math.max(enterX, Math.max(enterY, enterZ)));
+        double leave = Math.min(1, Math.min(leaveX, Math.min(leaveY, leaveZ)));
+        return enter < leave;
     }
 
     private static boolean lineInterval(double origin, double target, double min, double max,

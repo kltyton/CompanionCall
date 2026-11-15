@@ -35,6 +35,7 @@ final class AStarPlanner {
     }
 
     private static final double EPS = 1.0E-7;
+    private static final double FLIGHT_GOAL_CONNECTOR_RANGE_SQR = 36.0;
     private static final int[][] HORIZONTAL = {
             { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
             { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 }
@@ -144,7 +145,7 @@ final class AStarPlanner {
             used++;
             if (current.h < closest.h) closest = current;
             if (atGoal(current)) {
-                return new Result(Progress.FOUND, buildPath(current), used);
+                return new Result(Progress.FOUND, buildPath(current, goalMode == TravelMode.AIR), used);
             }
             expand(current);
             if (limitHit) {
@@ -155,7 +156,7 @@ final class AStarPlanner {
     }
 
     NavigationPath closestPath() {
-        return closest.parent == null ? NavigationPath.empty() : buildPath(closest);
+        return closest.parent == null ? NavigationPath.empty() : buildPath(closest, false);
     }
 
     private void expand(Node current) {
@@ -212,14 +213,6 @@ final class AStarPlanner {
             }
         }
         if (profile.allows(TravelMode.WATER)) expandLandToWater(current);
-        if (profile.allows(TravelMode.AIR)) {
-            CollisionWorld.Tri body = world.bodyClear(current.feet, profile);
-            if (body == CollisionWorld.Tri.UNKNOWN) {
-                unknownSeen = true;
-            } else if (body == CollisionWorld.Tri.CLEAR) {
-                add(current, current.feet, NavigationPath.Kind.FLY, TravelMode.AIR, 0.5);
-            }
-        }
     }
 
     private void expandLandToWater(Node current) {
@@ -253,7 +246,6 @@ final class AStarPlanner {
 
     private void expandAir(Node current) {
         expandVolume(current, TravelMode.AIR);
-        if (profile.allows(TravelMode.LAND)) expandToLand(current);
     }
 
     private void expandVolume(Node current, TravelMode mode) {
@@ -405,6 +397,9 @@ final class AStarPlanner {
 
     private boolean atGoal(Node node) {
         if (node.mode != goalMode) return false;
+        if (goalMode == TravelMode.AIR) {
+            return node.feet.distanceToSqr(goal) <= FLIGHT_GOAL_CONNECTOR_RANGE_SQR && goalClear(node);
+        }
         double dx = node.feet.x - goal.x;
         double dz = node.feet.z - goal.z;
         double horizontal = Math.sqrt(dx * dx + dz * dz);
@@ -428,19 +423,23 @@ final class AStarPlanner {
             return edgeClear(node.feet, goal, kind) == CollisionWorld.Tri.CLEAR;
         }
         CollisionWorld.Tri clear = world.segmentClear(node.feet, goal, profile);
+        if (clear == CollisionWorld.Tri.UNKNOWN) unknownSeen = true;
         if (clear != CollisionWorld.Tri.CLEAR) return false;
         if (node.mode == TravelMode.WATER) {
             return world.waterImmersion(goal, profile) == CollisionWorld.Tri.CLEAR;
         }
-        return world.bodyClear(goal, profile) == CollisionWorld.Tri.CLEAR;
+        return true;
     }
 
-    private NavigationPath buildPath(Node end) {
+    private NavigationPath buildPath(Node end, boolean includeFlightDestination) {
         Deque<Node> chain = new ArrayDeque<>();
         for (Node node = end; node != null; node = node.parent) chain.addFirst(node);
         List<NavigationPath.Point> points = new ArrayList<>(chain.size());
         for (Node node : chain) {
             points.add(new NavigationPath.Point(node.feet, node.kind));
+        }
+        if (includeFlightDestination && end.feet.distanceToSqr(goal) > 1.0E-12) {
+            points.add(new NavigationPath.Point(goal, NavigationPath.Kind.FLY));
         }
         return NavigationPath.fromPoints(points);
     }

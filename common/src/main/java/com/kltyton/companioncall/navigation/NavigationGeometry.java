@@ -9,6 +9,7 @@ import net.minecraft.world.phys.Vec3;
 /** Collision, support, mode-transition and path-shortcut predicates for one session. */
 final class NavigationGeometry {
     private static final int MAX_SHORTCUT_POINTS = 16;
+    private static final double MAX_DIRECT_HEIGHT_CHANGE_DISTANCE_SQR = 4.0;
     private static final double EPS = 1.0E-5;
 
     static final class Resolution {
@@ -82,16 +83,21 @@ final class NavigationGeometry {
             if (water == CollisionWorld.Tri.UNKNOWN) unknown = CollisionWorld.Tri.UNKNOWN;
         }
         if (profile.allows(TravelMode.LAND)) {
-            int centerX = floor(requested.x);
-            int centerZ = floor(requested.z);
+            CollisionWorld.GroundResult grounded = world.groundDestination(requested, profile);
+            if (grounded.status == CollisionWorld.Tri.UNKNOWN) {
+                return new Resolution(CollisionWorld.Tri.UNKNOWN, null, null);
+            }
+            Vec3 landTarget = grounded.point == null ? requested : grounded.point;
+            int centerX = floor(landTarget.x);
+            int centerZ = floor(landTarget.z);
             for (int radius = 0; radius <= 1; radius++) {
                 for (int dx = -radius; dx <= radius; dx++) {
                     for (int dz = -radius; dz <= radius; dz++) {
                         if (radius == 1 && Math.abs(dx) != 1 && Math.abs(dz) != 1) continue;
-                        double x = radius == 0 ? requested.x : centerX + dx + 0.5;
-                        double z = radius == 0 ? requested.z : centerZ + dz + 0.5;
+                        double x = radius == 0 ? landTarget.x : centerX + dx + 0.5;
+                        double z = radius == 0 ? landTarget.z : centerZ + dz + 0.5;
                         CollisionWorld.StandResult stands = world.standHeights(x, z,
-                                requested.y, profile);
+                                landTarget.y, profile);
                         if (stands.status == CollisionWorld.Tri.UNKNOWN) {
                             unknown = CollisionWorld.Tri.UNKNOWN;
                             continue;
@@ -100,7 +106,7 @@ final class NavigationGeometry {
                                 || stands.heights.isEmpty()) continue;
                         Vec3 point = new Vec3(x, stands.heights.get(0), z);
                         if (landFallback == null) landFallback = point;
-                        if (Math.abs(point.y - requested.y) <= arrivalRadius(TravelMode.LAND)) {
+                        if (Math.abs(point.y - landTarget.y) <= arrivalRadius(TravelMode.LAND)) {
                             return new Resolution(CollisionWorld.Tri.CLEAR, point,
                                     TravelMode.LAND);
                         }
@@ -160,9 +166,17 @@ final class NavigationGeometry {
         if (kind == NavigationPath.Kind.SWIM) {
             return world.waterSegmentClear(from, to, profile);
         }
-        CollisionWorld.Tri clear = world.segmentClear(from, to, profile);
-        if (clear != CollisionWorld.Tri.CLEAR) return clear;
-        return world.bodyClear(to, profile);
+        return world.segmentClear(from, to, profile);
+    }
+
+    CollisionWorld.Tri validateShortcut(NavigationProfile profile, Vec3 from, Vec3 to,
+                                        NavigationPath.Kind kind) {
+        if ((kind == NavigationPath.Kind.STEP_UP || kind == NavigationPath.Kind.JUMP
+                || kind == NavigationPath.Kind.DROP)
+                && to.subtract(from).horizontalDistanceSqr() > MAX_DIRECT_HEIGHT_CHANGE_DISTANCE_SQR) {
+            return CollisionWorld.Tri.BLOCKED;
+        }
+        return validateDirect(profile, from, to, kind);
     }
 
     CollisionWorld.Tri transitionLandClear(NavigationProfile profile, Vec3 from, Vec3 to,
@@ -178,12 +192,10 @@ final class NavigationGeometry {
         if (mode == TravelMode.LAND) {
             NavigationPath.Kind kind = classify(profile, from, to);
             if (kind == null) return CollisionWorld.Tri.BLOCKED;
-            return validateDirect(profile, from, to, kind);
+            return validateShortcut(profile, from, to, kind);
         }
         if (mode == TravelMode.WATER) return world.waterSegmentClear(from, to, profile);
-        CollisionWorld.Tri clear = world.segmentClear(from, to, profile);
-        if (clear != CollisionWorld.Tri.CLEAR) return clear;
-        return world.bodyClear(to, profile);
+        return world.segmentClear(from, to, profile);
     }
 
     TravelMode currentMode(NavigationProfile profile) {
@@ -192,7 +204,7 @@ final class NavigationGeometry {
                 && world.waterImmersion(position, profile) == CollisionWorld.Tri.CLEAR) {
             return TravelMode.WATER;
         }
-        if (profile.allows(TravelMode.AIR) && !entity.onGround()) return TravelMode.AIR;
+        if (profile.allows(TravelMode.AIR)) return TravelMode.AIR;
         if (profile.allows(TravelMode.LAND)) {
             CollisionWorld.StandResult stands = world.standHeights(entity.getX(), entity.getZ(),
                     entity.getY(), profile);
@@ -200,7 +212,6 @@ final class NavigationGeometry {
                 return TravelMode.LAND;
             }
         }
-        if (profile.allows(TravelMode.AIR)) return TravelMode.AIR;
         return profile.primaryMode();
     }
 
@@ -208,8 +219,14 @@ final class NavigationGeometry {
         if (target == null || !Double.isFinite(target.x) || !Double.isFinite(target.y)
                 || !Double.isFinite(target.z)) return false;
         world.beginStep();
-        TravelMode targetMode = exactTargetMode(profile, target);
-        if (targetMode == null) return false;
+        Resolution resolution = resolveGoal(profile, target);
+        if (resolution.status != CollisionWorld.Tri.CLEAR || resolution.point == null
+                || resolution.mode == null) return false;
+        return canMoveDirectlyToResolved(profile, resolution.point, resolution.mode);
+    }
+
+    boolean canMoveDirectlyToResolved(NavigationProfile profile, Vec3 target,
+                                      TravelMode targetMode) {
         Vec3 from = entity.position();
         TravelMode current = currentMode(profile);
         if (current == targetMode) {
@@ -223,16 +240,11 @@ final class NavigationGeometry {
             return clear == CollisionWorld.Tri.CLEAR
                     && world.waterImmersion(target, profile) == CollisionWorld.Tri.CLEAR;
         }
-        if (targetMode == TravelMode.LAND
-                && (current == TravelMode.WATER || current == TravelMode.AIR)) {
+        if (targetMode == TravelMode.LAND && current == TravelMode.WATER) {
             NavigationPath.Kind kind = classify(profile, from, target);
             if (kind == null) return false;
             return transitionLandClear(profile, from, target, kind)
                     == CollisionWorld.Tri.CLEAR;
-        }
-        if (targetMode == TravelMode.AIR && current == TravelMode.LAND) {
-            return world.segmentClear(from, target, profile) == CollisionWorld.Tri.CLEAR
-                    && world.bodyClear(target, profile) == CollisionWorld.Tri.CLEAR;
         }
         return false;
     }
@@ -375,7 +387,11 @@ final class NavigationGeometry {
     }
 
     static double arrivalRadius(TravelMode mode) {
-        return mode == TravelMode.LAND ? 0.9 : 1.5;
+        return switch (mode) {
+            case LAND -> .9;
+            case WATER -> 1.5;
+            case AIR -> MobDriver.FLIGHT_WAYPOINT_RADIUS;
+        };
     }
 
     static double arrivalHoldRadius(TravelMode mode) {

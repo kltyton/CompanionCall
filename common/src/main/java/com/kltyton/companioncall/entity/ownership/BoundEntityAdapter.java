@@ -52,6 +52,11 @@ public final class BoundEntityAdapter implements PetAdapter {
         return EnumSet.allOf(TravelMode.class);
     }
 
+    @Override public boolean isFlying(Entity entity) {
+        return entity instanceof Mob mob && VanillaPetAdapter.hasNativeFlight(mob)
+                && !entity.onGround() && PetAdapter.super.isFlying(entity);
+    }
+
     @Override public Set<TravelMode> mapTravelModes(Entity entity) {
         if (NativeVersion.isBoat(entity)) return EnumSet.of(TravelMode.LAND, TravelMode.WATER);
         if (NativeVersion.isMinecart(entity)) return Set.of();

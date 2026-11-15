@@ -3,6 +3,7 @@ package com.kltyton.companioncall.navigation;
 import com.kltyton.companioncall.api.TravelMode;
 import com.kltyton.companioncall.CompanionCall;
 import com.kltyton.companioncall.api.CompanionCallApi;
+import com.kltyton.companioncall.api.PetAdapter;
 import com.kltyton.companioncall.api.RecallPursuit;
 import com.kltyton.companioncall.api.RecallArrival;
 import com.kltyton.companioncall.entity.navigation.BoardingApproach;
@@ -19,6 +20,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.ai.control.FlyingMoveControl;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -32,6 +34,8 @@ public final class NavigationSession {
     private static final int MAX_REPLANS = 8;
     private static final int VALIDATE_INTERVAL = 5;
     private static final int REGION_RETRY_TICKS = 10;
+    private static final int MAX_TAKEOFF_TICKS = 12;
+    private static final double CONTINUATION_START_DISTANCE = 224.0;
     private static final int MAX_PREFIX_POINTS = 6;
     private static final double MAX_PREFIX_LENGTH = 6.0;
     private static final double EPS = 1.0E-5;
@@ -43,6 +47,10 @@ public final class NavigationSession {
     private final NavigationGeometry geometry;
     private final MobDriver driver = new MobDriver();
     private final UUID owner;
+    private final PetAdapter adapter;
+    private NavigationProfile declaredProfile;
+    private NavigationProfile groundProfile;
+    private NavigationProfile flightProfile;
     private NavigationProfile profile;
 
     private NavigationStatus status = NavigationStatus.IDLE;
@@ -53,7 +61,12 @@ public final class NavigationSession {
     private NavigationPath path = NavigationPath.empty();
     private NavigationPath searchPrefix = NavigationPath.empty();
     private AStarPlanner search;
+    private AStarPlanner continuation;
+    private long continuationRetryTick = -1;
     private int replans;
+    private Vec3 obstructionOrigin;
+    private boolean attemptedTakeoff;
+    private long takeoffUntil = -1;
     private long retryTick = -1;
     private long deadlineTick = -1;
     private long nextValidationTick;
@@ -87,12 +100,14 @@ public final class NavigationSession {
         this.server = serverLevel.getServer();
         this.world = new CollisionWorld(serverLevel, entity);
         this.geometry = new NavigationGeometry(entity, world);
-        this.owner = ownerOf(entity);
-        this.profile = profile;
+        this.adapter = CompanionCallApi.adapter(entity);
+        this.owner = adapter == null ? NativeVersion.owner(entity) : adapter.owner(entity);
+        setProfile(profile);
+        this.profile = activeProfile();
     }
 
     public Entity entity() { return entity; }
-    public NavigationProfile profile() { return profile; }
+    public NavigationProfile profile() { return declaredProfile; }
     public Vec3 goal() { return requestedGoal; }
     public NavigationStatus status() { return status; }
 
@@ -101,7 +116,7 @@ public final class NavigationSession {
         requireServerThread();
         if (closed || status != NavigationStatus.IDLE) throw new IllegalStateException("Session already used");
         fixedGoal = true;
-        profile = profile.adaptTo(entity);
+        refreshProfile(server.getTickCount());
         requestedGoal = Objects.requireNonNull(goal, "goal");
         status = NavigationStatus.SEARCHING;
         NavigationScheduler.wake(this);
@@ -143,8 +158,10 @@ public final class NavigationSession {
         long tick = server.getTickCount();
         if (!tickLifecycle(tick)) return;
 
-        profile = profile.adaptTo(entity);
-        if ((requestedGoal == null || requestedGoal.distanceToSqr(goal) > EPS || path.isEmpty())
+        refreshProfile(tick);
+        boolean checkDirect = !flying() || status == NavigationStatus.IDLE || terminal(status);
+        if (checkDirect && takeoffUntil <= tick
+                && (requestedGoal == null || requestedGoal.distanceToSqr(goal) > EPS || path.isEmpty())
                 && directRequest(goal, tick)) return;
 
         boolean sameGoal = requestedGoal != null
@@ -166,7 +183,6 @@ public final class NavigationSession {
                 * NavigationGeometry.arrivalRadius(targetModeOrPrimary())) {
             return;
         }
-        profile = profile.adaptTo(entity);
         startRequest(goal, tick);
     }
 
@@ -180,8 +196,36 @@ public final class NavigationSession {
         }
         long tick = server.getTickCount();
         if (!tickLifecycle(tick)) return;
-        profile = profile.adaptTo(entity);
+        refreshProfile(tick);
         startRequest(requestedGoal, tick);
+    }
+
+    private void setProfile(NavigationProfile declared) {
+        declaredProfile = declared;
+        groundProfile = declared.withoutFlight();
+        flightProfile = declared.allows(TravelMode.AIR) ? declared.withMode(TravelMode.AIR) : null;
+    }
+
+    private NavigationProfile activeProfile() {
+        if (flightProfile != null && (adapter == null ? entity.isNoGravity() && !entity.onGround()
+                : adapter.isFlying(entity))) return flightProfile;
+        return groundProfile;
+    }
+
+    private void refreshProfile(long tick) {
+        NavigationProfile updated = declaredProfile.adaptTo(entity);
+        if (updated != declaredProfile) setProfile(updated);
+        NavigationProfile active = activeProfile();
+        if (profile == active) return;
+        profile = active;
+        sideTargetTick = Long.MIN_VALUE;
+        if (requestedGoal != null && status != NavigationStatus.CANCELLED) {
+            startRequest(requestedGoal, tick);
+        }
+    }
+
+    private boolean flying() {
+        return profile == flightProfile;
     }
 
     private void startRequest(Vec3 goal, long tick) {
@@ -192,7 +236,12 @@ public final class NavigationSession {
         path = NavigationPath.empty();
         searchPrefix = NavigationPath.empty();
         search = null;
+        continuation = null;
+        continuationRetryTick = -1;
         replans = 0;
+        obstructionOrigin = null;
+        attemptedTakeoff = false;
+        takeoffUntil = -1;
         retryTick = -1;
         deadlineTick = -1;
         nextValidationTick = tick;
@@ -206,24 +255,33 @@ public final class NavigationSession {
     }
 
     private boolean directRequest(Vec3 goal, long tick) {
-        if (!geometry.canMoveDirectlyTo(profile, goal)) return false;
+        world.beginStep();
+        NavigationGeometry.Resolution resolution = geometry.resolveGoal(profile, goal);
+        if (resolution.status != CollisionWorld.Tri.CLEAR || resolution.point == null
+                || resolution.mode == null
+                || !geometry.canMoveDirectlyToResolved(profile, resolution.point, resolution.mode)) {
+            return false;
+        }
         if (tryArrive(goal, tick)) return true;
-        TravelMode mode = geometry.exactTargetMode(profile, goal);
-        NavigationPath.Kind kind = NavigationGeometry.kindForMode(profile, entity.position(), goal, mode);
+        NavigationPath.Kind kind = NavigationGeometry.kindForMode(profile, entity.position(),
+                resolution.point, resolution.mode);
         if (kind == null) return false;
         requestedGoal = goal;
         plannedRequestGoal = goal;
-        targetGoal = goal;
-        targetMode = mode;
+        targetGoal = resolution.point;
+        targetMode = resolution.mode;
         search = null;
+        continuation = null;
+        continuationRetryTick = -1;
         searchPrefix = NavigationPath.empty();
         path = NavigationPath.fromPoints(List.of(
                 new NavigationPath.Point(entity.position(), NavigationPath.Kind.START),
-                new NavigationPath.Point(goal, kind)));
+                new NavigationPath.Point(resolution.point, kind)));
         pendingGoalReplan = false;
         partialGoal = false;
         partialExhausted = false;
         deadlineTick = -1;
+        takeoffUntil = -1;
         retryTick = -1;
         status = NavigationStatus.MOVING;
         driver.pathChanged(this, tick);
@@ -234,6 +292,11 @@ public final class NavigationSession {
 
     private void mergeRequest(Vec3 goal, long tick) {
         requestedGoal = goal;
+        if (flying() && (search != null || !path.isEmpty())) {
+            pendingGoalReplan = plannedRequestGoal != null
+                    && plannedRequestGoal.distanceToSqr(goal) > GOAL_CHANGE_TOLERANCE * GOAL_CHANGE_TOLERANCE;
+            return;
+        }
         if (tryArrive(goal, tick)) return;
         if (status == NavigationStatus.MOVING && !path.isEmpty()) {
             driver.updateCursor(entity.position(), path);
@@ -305,7 +368,7 @@ public final class NavigationSession {
         if (end.distanceTo(resolution.point) > 3.0) return false;
         NavigationPath.Kind kind = NavigationGeometry.kindForMode(profile, end, resolution.point,
                 resolution.mode);
-        if (kind == null || geometry.validateDirect(profile, end, resolution.point, kind)
+        if (kind == null || geometry.validateShortcut(profile, end, resolution.point, kind)
                 != CollisionWorld.Tri.CLEAR) return false;
         NavigationPath tail = NavigationPath.fromPoints(Collections.singletonList(
                 new NavigationPath.Point(resolution.point, kind)));
@@ -331,7 +394,9 @@ public final class NavigationSession {
             return false;
         }
         if (!Objects.equals(ownerOf(entity), owner)) return false;
-        return geometry.canMoveDirectlyTo(profile, target);
+        NavigationProfile probe = status == NavigationStatus.IDLE && declaredProfile.modes().size() == 1
+                ? declaredProfile.adaptTo(entity) : profile;
+        return geometry.canMoveDirectlyTo(probe, target);
     }
 
     public Vec3 waypoint() {
@@ -366,6 +431,9 @@ public final class NavigationSession {
     }
 
     public void requestPursuit(RecallPursuit pursuit, Vec3 riderOffset, boolean boarding) {
+        requireServerThread();
+        if (!tickLifecycle(server.getTickCount()) || status == NavigationStatus.CANCELLED) return;
+        refreshProfile(server.getTickCount());
         boolean landed = Boolean.FALSE.equals(pursuitGrounded) && pursuit.grounded();
         pursuitGrounded = pursuit.grounded();
         var player = owner == null ? null : server.getPlayerList().getPlayer(owner);
@@ -401,11 +469,10 @@ public final class NavigationSession {
         }
         request(sideApproach ? target.add(pursuit.target().subtract(pursuit.position()))
                 : pursuit.targetFor(entity.position(), riderOffset));
-        if (landed && pendingGoalReplan) restart();
+        if (landed && pendingGoalReplan && !flying()) restart();
     }
 
     private Vec3 sideTarget(ServerPlayer player) {
-        profile = profile.adaptTo(entity);
         var playerBox = player.getBoundingBox();
         var mountBox = entity.getBoundingBox();
         long tick = server.getTickCount();
@@ -457,9 +524,17 @@ public final class NavigationSession {
     private boolean followPursuit(Entity actor, RecallPursuit pursuit, Vec3 riderOffset, boolean boarding) {
         requireServerThread();
         if (actor != entity) throw new IllegalArgumentException("This session belongs to another entity");
-        if (!tickLifecycle(server.getTickCount()) || closed || status == NavigationStatus.CANCELLED) return holdPursuit(actor);
-        if (pursuitTick == server.getTickCount()) return true;
+        long tick = server.getTickCount();
+        if (!tickLifecycle(tick) || status == NavigationStatus.CANCELLED) return holdPursuit(actor);
+        if (pursuitTick == tick) return true;
+        refreshProfile(tick);
+        if (actor instanceof Mob mob && driveTakeoff(mob, tick, 1)) return true;
+        if (status == NavigationStatus.MOVING) validateAhead(tick, false);
+        else if (status == NavigationStatus.WAITING_REGION && search == null && !path.isEmpty()) validateAhead(tick, true);
+        scheduleContinuation(tick);
+        if (flying() && status != NavigationStatus.MOVING && status != NavigationStatus.ARRIVED) return holdPursuit(actor);
         Vec3 position = actor.position();
+        if (handleGroundCursor(driver.updateLandCursor(this, position), tick)) return holdPursuit(actor);
         Vec3 previousMotion = pursuitPosition != null && pursuitTick == server.getTickCount() - 1
                 ? position.subtract(pursuitPosition) : actor.getDeltaMovement();
         Vec3 relative = previousMotion.subtract(pursuit.velocity());
@@ -469,9 +544,11 @@ public final class NavigationSession {
         Vec3 currentTarget = sideApproach ? sideTarget(player) : pursuit.currentTargetFor(riderOffset);
         if (currentTarget == null) return holdPursuit(actor);
         double captureRange = Math.max(pursuit.speed() * 2, relative.lengthSqr() / (2 * pursuit.accelerationLimit()));
-        boolean finalApproach = position.distanceTo(currentTarget) <= captureRange && canMoveDirectlyTo(currentTarget);
+        boolean finalLeg = flying() && status == NavigationStatus.MOVING && driver.isFinalFlightLeg(path)
+                && currentTarget.distanceToSqr(path.end()) <= GOAL_CHANGE_TOLERANCE * GOAL_CHANGE_TOLERANCE;
+        boolean finalApproach = (!flying() || status == NavigationStatus.ARRIVED || finalLeg)
+                && position.distanceTo(currentTarget) <= captureRange && canMoveDirectlyTo(currentTarget);
         if (finalApproach && (requestedGoal == null || requestedGoal.distanceToSqr(currentTarget) > EPS)) request(currentTarget);
-        if (status == NavigationStatus.MOVING) validateAhead(server.getTickCount(), false);
         if (partialExhausted && !path.isEmpty()
                 && position.distanceToSqr(path.end()) <= .25) {
             terminate(partialTerminal);
@@ -480,7 +557,7 @@ public final class NavigationSession {
         Vec3 steering = finalApproach ? currentTarget : status == NavigationStatus.ARRIVED && requestedGoal != null
                 && canMoveDirectlyTo(requestedGoal) ? requestedGoal : driver.pursuitWaypoint(this, pursuit.speed());
         boolean localPrefix = false;
-        if (steering == null && (status == NavigationStatus.SEARCHING || status == NavigationStatus.WAITING_REGION)) {
+        if (!flying() && steering == null && (status == NavigationStatus.SEARCHING || status == NavigationStatus.WAITING_REGION)) {
             steering = pursuitPrefix(pursuit);
             localPrefix = steering != null;
         }
@@ -489,7 +566,8 @@ public final class NavigationSession {
                 && (!sideApproach || finalApproach && RecallArrival.sideReady(actor, player))) BoardingApproach.authorize(actor, player);
         else BoardingApproach.clear(actor);
         Vec3 motion = pursuit.velocityTowardPoint(position, steering, finalApproach);
-        TravelMode mode = localPrefix || finalApproach ? geometry.exactTargetMode(profile, steering) : driver.movementMode(this);
+        TravelMode mode = flying() ? TravelMode.AIR
+                : localPrefix || finalApproach ? geometry.exactTargetMode(profile, steering) : driver.movementMode(this);
         double cap = Math.min(pursuit.speed(), mode == TravelMode.LAND ? 2.25 : pursuit.speed());
         double distance = position.distanceTo(steering);
         if (!finalApproach) cap = Math.min(cap, distance);
@@ -502,7 +580,15 @@ public final class NavigationSession {
         double accelerationLimit = pursuit.accelerationLimit();
         if (change.length() > accelerationLimit) motion = previousMotion.add(change.normalize().scale(accelerationLimit));
         world.beginStep();
-        if (world.segmentClear(position, position.add(motion), profile) == CollisionWorld.Tri.UNKNOWN) return holdPursuit(actor);
+        CollisionWorld.Tri motionClear = world.segmentClear(position, position.add(motion), profile);
+        if (mode == TravelMode.AIR && (motionClear != CollisionWorld.Tri.CLEAR
+                || !finalApproach && motion.lengthSqr() > cap * cap)) {
+            // Brake at the corner instead of carrying momentum through a wall or beyond a node.
+            motion = steering.subtract(position).normalize().scale(Math.min(cap, accelerationLimit));
+            motionClear = world.segmentClear(position, position.add(motion), profile);
+            if (motionClear != CollisionWorld.Tri.CLEAR) return holdPursuit(actor);
+        }
+        if (motionClear == CollisionWorld.Tri.UNKNOWN) return holdPursuit(actor);
         pursuitTick = server.getTickCount();
         pursuitPosition = position;
         NativeVersion.synchronizeMovement(actor);
@@ -555,19 +641,7 @@ public final class NavigationSession {
         double distance = direction.length();
         if (distance <= EPS) return null;
         Vec3 candidate = position.add(direction.scale(Math.min(distance, pursuit.speed()) / distance));
-        if (!canMoveDirectlyTo(candidate)) {
-            if (!profile.allows(TravelMode.AIR)) return null;
-            Vec3 horizontal = new Vec3(direction.x, 0, direction.z);
-            double horizontalDistance = horizontal.length();
-            Vec3 across = horizontalDistance <= EPS ? position
-                    : position.add(horizontal.scale(Math.min(horizontalDistance, pursuit.speed()) / horizontalDistance));
-            if (horizontalDistance > EPS && canMoveDirectlyTo(across)) candidate = across;
-            else {
-                candidate = position.add(0, pursuit.speed(), 0);
-                if (!canMoveDirectlyTo(candidate)) return null;
-            }
-        }
-        return candidate;
+        return canMoveDirectlyTo(candidate) ? candidate : null;
     }
 
     public boolean drive(Mob mob, double speed) {
@@ -575,26 +649,12 @@ public final class NavigationSession {
         if (mob != entity) throw new IllegalArgumentException("This session belongs to another entity");
         long tick = server.getTickCount();
         if (!tickLifecycle(tick)) return false;
+        refreshProfile(tick);
         if (closed || status == NavigationStatus.CANCELLED
                 || status == NavigationStatus.LIMIT_REACHED
                 || status == NavigationStatus.NO_ROUTE_IN_REGION) return false;
+        if (driveTakeoff(mob, tick, speed)) return true;
 
-        NavigationProfile adapted = profile.adaptTo(entity);
-        if (!profile.sameAs(adapted)) {
-            profile = adapted;
-            search = null;
-            path = NavigationPath.empty();
-            searchPrefix = NavigationPath.empty();
-            pendingGoalReplan = false;
-            driver.clear();
-            if (status == NavigationStatus.MOVING) {
-                beginReplan(tick);
-            } else if (status == NavigationStatus.SEARCHING
-                    || status == NavigationStatus.WAITING_REGION) {
-                status = NavigationStatus.SEARCHING;
-                retryTick = 0;
-            }
-        }
         if (status == NavigationStatus.ARRIVED) {
             if (requestedGoal == null) {
                 status = NavigationStatus.IDLE;
@@ -602,7 +662,7 @@ public final class NavigationSession {
             }
             double hold = NavigationGeometry.arrivalHoldRadius(targetModeOrPrimary());
             if (entity.position().distanceToSqr(requestedGoal) <= hold * hold) return false;
-            if (canMoveDirectlyTo(requestedGoal)) return driver.driveDirect(this, mob, speed);
+            if (!flying() && canMoveDirectlyTo(requestedGoal)) return driver.driveDirect(this, mob, speed);
             startRequest(requestedGoal, tick);
             return false;
         }
@@ -617,6 +677,7 @@ public final class NavigationSession {
             validateAhead(tick, true);
             if (status == NavigationStatus.WAITING_REGION) return false;
         }
+        scheduleContinuation(tick);
         if (path.isEmpty()) {
             if (status == NavigationStatus.MOVING) beginReplan(tick);
             return false;
@@ -629,23 +690,20 @@ public final class NavigationSession {
         requireServerThread();
         long tick = server.getTickCount();
         if (!fixedGoal || !tickLifecycle(tick)) return false;
-        NavigationProfile adapted = profile.adaptTo(entity);
-        if (!profile.sameAs(adapted)) {
-            profile = adapted;
-            if (status == NavigationStatus.MOVING) {
-                path = NavigationPath.empty();
-                beginReplan(tick);
-            }
-        }
+        refreshProfile(tick);
         if (status == NavigationStatus.WAITING_REGION && search == null && !path.isEmpty()) validateAhead(tick, true);
         if (status != NavigationStatus.MOVING) return false;
         validateAhead(tick, false);
         if (status != NavigationStatus.MOVING || path.isEmpty()) return false;
-        if (arriveAt(targetGoal, targetMode)) return false;
-
+        scheduleContinuation(tick);
         Vec3 from = entity.position();
-        driver.updateCursor(from, path);
+        if (handleGroundCursor(driver.updateLandCursor(this, from), tick)) return false;
         NavigationPath.Segment segment = path.segments().isEmpty() ? null : path.segments().get(driver.cursorSegment());
+        if (awaitingContinuation() && from.distanceToSqr(path.end()) <= .25) return false;
+        if ((!flying() || driver.isFinalFlightLeg(path)
+                && MobDriver.reachedFlightWaypoint(from, path.end()))
+                && arriveAt(targetGoal, targetMode)) return false;
+        if (finishPartialEndpoint()) return false;
         if (segment == null || from.distanceToSqr(segment.to()) <= EPS) {
             if (!canMoveDirectlyTo(targetGoal)) {
                 beginReplan(tick);
@@ -685,7 +743,8 @@ public final class NavigationSession {
             default -> world.segmentClear(from, next, profile);
         };
         if (clearance != CollisionWorld.Tri.CLEAR) {
-            beginReplan(tick);
+            if (mode == TravelMode.AIR) flightObstruction(clearance, tick);
+            else beginReplan(tick);
             return false;
         }
         NativeVersion.synchronizeMovement(entity);
@@ -719,9 +778,12 @@ public final class NavigationSession {
     int planTurn(int maxExpansions, long tick) {
         if (closed || status == NavigationStatus.CANCELLED) return 0;
         if (!tickLifecycle(tick)) return 0;
+        refreshProfile(tick);
+        if (continuation != null) return planContinuation(maxExpansions, tick);
         if (status != NavigationStatus.SEARCHING && status != NavigationStatus.WAITING_REGION) {
             return 0;
         }
+        if (takeoffUntil > tick) return 0;
         if (status == NavigationStatus.WAITING_REGION) {
             if (search == null && !path.isEmpty() && !partialGoal) return 0;
             if (tick < retryTick) return 0;
@@ -731,14 +793,6 @@ public final class NavigationSession {
         if (tick > deadlineTick) {
             terminate(NavigationStatus.LIMIT_REACHED);
             return 0;
-        }
-        NavigationProfile adapted = profile.adaptTo(entity);
-        if (!profile.sameAs(adapted)) {
-            profile = adapted;
-            search = null;
-            searchPrefix = NavigationPath.empty();
-            path = NavigationPath.empty();
-            driver.clear();
         }
         if (search == null && !startSearch(tick, !path.isEmpty())) return 0;
 
@@ -752,15 +806,16 @@ public final class NavigationSession {
                 searchPrefix = NavigationPath.empty();
                 deadlineTick = -1;
                 retryTick = -1;
-                if (path.isEmpty()) {
-                    status = NavigationStatus.ARRIVED;
-                    clearPlanning();
-                    NavigationScheduler.forget(this);
+                if (path.segments().isEmpty() && flying()) {
+                    if (!tryArrive(requestedGoal, tick)) {
+                        if (pendingGoalReplan) startRequest(requestedGoal, tick);
+                        else terminate(NavigationStatus.NO_ROUTE_IN_REGION);
+                    }
                 } else {
                     status = NavigationStatus.MOVING;
                     driver.pathChanged(this, tick);
                     nextValidationTick = tick;
-                    if (pendingGoalReplan) {
+                    if (pendingGoalReplan && !flying()) {
                         pendingGoalReplan = false;
                         beginReplan(tick, false);
                     }
@@ -785,6 +840,7 @@ public final class NavigationSession {
             }
             case NO_ROUTE -> {
                 if (pendingGoalReplan) startRequest(requestedGoal, tick);
+                else if (queueTakeoff(tick)) search = null;
                 else if (!finishPartialSearch(tick, NavigationStatus.NO_ROUTE_IN_REGION)) terminate(NavigationStatus.NO_ROUTE_IN_REGION);
                 return result.used;
             }
@@ -800,7 +856,7 @@ public final class NavigationSession {
     }
 
     boolean isScheduled() {
-        return !closed && (status == NavigationStatus.SEARCHING
+        return !closed && (continuation != null || status == NavigationStatus.SEARCHING
                 || (status == NavigationStatus.WAITING_REGION
                 && (search != null || path.isEmpty() || partialGoal)));
     }
@@ -821,6 +877,8 @@ public final class NavigationSession {
             retryTick = tick + REGION_RETRY_TICKS;
             return false;
         }
+        if ((goal.point == null || requestedGoal.y > goal.point.y + profile.maxJumpHeight())
+                && queueTakeoff(tick)) return false;
         NavigationGeometry.Start start = geometry.resolveStart(profile);
         if (start == null) {
             status = NavigationStatus.WAITING_REGION;
@@ -844,6 +902,7 @@ public final class NavigationSession {
             return false;
         }
         if (fixedGoal && arriveAt(goal.point, goal.mode)) return false;
+        if (!fixedGoal && flying() && tryArrive(requestedGoal, tick)) return false;
         partialGoal = false;
         partialExhausted = false;
         NavigationPath prefix = preservePrefix ? safePrefix() : NavigationPath.empty();
@@ -855,7 +914,7 @@ public final class NavigationSession {
         targetMode = goal.mode;
         NavigationPath.Kind directKind = start.mode == goal.mode
                 ? NavigationGeometry.kindForMode(profile, startPoint, goal.point, goal.mode) : null;
-        if (directKind != null && geometry.validateDirect(profile, startPoint, goal.point, directKind)
+        if (directKind != null && geometry.validateShortcut(profile, startPoint, goal.point, directKind)
                 == CollisionWorld.Tri.CLEAR) {
             NavigationPath direct = NavigationPath.fromPoints(List.of(
                     new NavigationPath.Point(startPoint, NavigationPath.Kind.START),
@@ -884,19 +943,100 @@ public final class NavigationSession {
         driver.pathChanged(this, tick);
     }
 
+    private boolean queueTakeoff(long tick) {
+        if (attemptedTakeoff || flightProfile == null || flying() || !entity.onGround()
+                || !(entity instanceof Mob mob) || !(mob.getMoveControl() instanceof FlyingMoveControl)
+                || mob.getControllingPassenger() != null) return false;
+        attemptedTakeoff = true;
+        takeoffUntil = tick + MAX_TAKEOFF_TICKS;
+        status = NavigationStatus.SEARCHING;
+        path = NavigationPath.empty();
+        searchPrefix = NavigationPath.empty();
+        return true;
+    }
+
+    private boolean driveTakeoff(Mob mob, long tick, double speed) {
+        if (takeoffUntil <= tick || flying() || mob.getControllingPassenger() != null) return false;
+        // Ask the native controller to lift off. The planner stays in ground mode until the
+        // controller has put the entity in its active flight phase.
+        Vec3 lift = mob.position().add(0, .6, 0);
+        world.beginStep();
+        if (world.segmentClear(mob.position(), lift, flightProfile) != CollisionWorld.Tri.CLEAR) {
+            takeoffUntil = -1;
+            return false;
+        }
+        mob.getMoveControl().setWantedPosition(lift.x, lift.y, lift.z, speed);
+        return true;
+    }
+
     private boolean finishPartialSearch(long tick, NavigationStatus terminalStatus) {
-        if (pursuitGrounded == null || !profile.allows(TravelMode.LAND) || profile.allows(TravelMode.AIR)) return false;
+        if ((!fixedGoal && pursuitGrounded == null) || !profile.allows(TravelMode.LAND)
+                || profile.allows(TravelMode.AIR)) return false;
         NavigationPath closest = search.closestPath();
         if (!closest.isEmpty()) updatePartialPath(searchPrefix.isEmpty() ? closest : searchPrefix.append(closest), tick);
         if (path.isEmpty() || entity.position().distanceToSqr(path.end()) <= .25) return false;
         search = null;
         searchPrefix = NavigationPath.empty();
         partialGoal = true;
-        partialExhausted = true;
+        partialExhausted = false;
         partialTerminal = terminalStatus;
         status = NavigationStatus.MOVING;
         nextValidationTick = tick;
-        NavigationScheduler.forget(this);
+        scheduleContinuation(tick);
+        return true;
+    }
+
+    private void scheduleContinuation(long tick) {
+        if (!partialGoal || partialExhausted || continuation != null || targetGoal == null || targetMode == null
+                || path.segments().isEmpty() || tick < continuationRetryTick) return;
+        driver.updateCursor(entity.position(), path);
+        if (path.length() - driver.routeCursor() > CONTINUATION_START_DISTANCE) return;
+        NavigationPath.Segment tail = path.segments().get(path.segments().size() - 1);
+        continuation = new AStarPlanner(world, profile, path.end(), modeOf(tail), targetGoal, targetMode);
+        NavigationScheduler.wake(this);
+    }
+
+    private int planContinuation(int maxExpansions, long tick) {
+        AStarPlanner.Result result = continuation.step(maxExpansions);
+        switch (result.progress) {
+            case FOUND -> {
+                NavigationPath extension = geometry.smooth(profile, result.path);
+                continuation = null;
+                continuationRetryTick = -1;
+                if (extension.segments().isEmpty()) {
+                    partialGoal = false;
+                    partialExhausted = false;
+                } else {
+                    path = path.append(extension);
+                    partialGoal = false;
+                    partialExhausted = false;
+                    driver.progressChanged(this, tick);
+                }
+            }
+            case EXPANDED -> {
+                return result.used;
+            }
+            case WAITING_REGION -> {
+                continuation = null;
+                continuationRetryTick = tick + REGION_RETRY_TICKS;
+            }
+            case NO_ROUTE, LIMITED -> {
+                continuation = null;
+                partialExhausted = true;
+                partialTerminal = result.progress == AStarPlanner.Progress.LIMITED
+                        ? NavigationStatus.LIMIT_REACHED : NavigationStatus.NO_ROUTE_IN_REGION;
+            }
+        }
+        return result.used;
+    }
+
+    boolean awaitingContinuation() {
+        return partialGoal && !partialExhausted;
+    }
+
+    boolean finishPartialEndpoint() {
+        if (!partialExhausted) return false;
+        terminate(partialTerminal);
         return true;
     }
 
@@ -925,7 +1065,7 @@ public final class NavigationSession {
             TravelMode mode = i > 0 ? modeOf(path.segments().get(i - 1))
                     : targetModeOrPrimary();
             NavigationPath.Kind kind = NavigationGeometry.kindForMode(profile, previous, next, mode);
-            if (kind == null || geometry.validateDirect(profile, previous, next, kind)
+            if (kind == null || geometry.validateShortcut(profile, previous, next, kind)
                     != CollisionWorld.Tri.CLEAR) break;
             points.add(new NavigationPath.Point(next, kind));
             previous = next;
@@ -936,11 +1076,15 @@ public final class NavigationSession {
     }
 
     private void validateAhead(long tick, boolean force) {
-        if (path.isEmpty()) return;
+        if (path.segments().isEmpty()) return;
+        if (flying()) {
+            validateFlightCorridor(tick, force);
+            return;
+        }
         if (!force && tick < nextValidationTick) return;
         nextValidationTick = tick + VALIDATE_INTERVAL;
         world.beginStep();
-        driver.updateCursor(entity.position(), path);
+        if (handleGroundCursor(driver.updateLandCursor(this, entity.position()), tick)) return;
         int first = driver.cursorSegment();
         int last = Math.min(path.segments().size() - 1, first + 2);
         CollisionWorld.Tri validation = CollisionWorld.Tri.CLEAR;
@@ -966,6 +1110,61 @@ public final class NavigationSession {
         }
     }
 
+    private void validateFlightCorridor(long tick, boolean force) {
+        Vec3 position = entity.position();
+        driver.updateCursor(position, path);
+        int index = driver.cursorSegment();
+        NavigationPath.Segment leg = path.segments().get(index);
+        boolean reached = MobDriver.reachedFlightWaypoint(position, leg.to());
+        if (driver.outsideFlightCorridor(position, path)) {
+            beginReplan(tick);
+            return;
+        }
+        if (status == NavigationStatus.WAITING_REGION && tick < nextValidationTick) return;
+        if (reached && !fixedGoal && (pendingGoalReplan || driver.isFinalFlightLeg(path))) {
+            if (directRequest(requestedGoal, tick)) return;
+            startRequest(requestedGoal, tick);
+            return;
+        }
+        if (!reached && !force && tick < nextValidationTick) return;
+        nextValidationTick = tick + VALIDATE_INTERVAL;
+        world.beginStep();
+        CollisionWorld.Tri clearance = world.segmentClear(position, leg.to(), profile);
+        if (clearance == CollisionWorld.Tri.CLEAR && reached && index + 1 < path.segments().size()) {
+            Vec3 next = path.segments().get(index + 1).to();
+            CollisionWorld.Tri nextClear = world.segmentClear(position, next, profile);
+            if (nextClear == CollisionWorld.Tri.CLEAR) driver.advanceFlightWaypoint(position, path);
+            else if (position.distanceToSqr(leg.to()) <= EPS) clearance = nextClear;
+        }
+        if (clearance != CollisionWorld.Tri.CLEAR) {
+            flightObstruction(clearance, tick);
+        } else if (status == NavigationStatus.WAITING_REGION) {
+            status = NavigationStatus.MOVING;
+        }
+    }
+
+    void flightObstruction(CollisionWorld.Tri clearance, long tick) {
+        if (clearance == CollisionWorld.Tri.UNKNOWN) {
+            status = NavigationStatus.WAITING_REGION;
+            nextValidationTick = tick + VALIDATE_INTERVAL;
+        } else {
+            beginReplan(tick);
+        }
+    }
+
+    boolean handleGroundCursor(MobDriver.CursorUpdate cursor, long tick) {
+        if (cursor == MobDriver.CursorUpdate.TRACKING) return false;
+        if (cursor == MobDriver.CursorUpdate.WAITING_REGION) {
+            status = NavigationStatus.WAITING_REGION;
+            search = null;
+            retryTick = tick + REGION_RETRY_TICKS;
+            NavigationScheduler.forget(this);
+        } else {
+            beginReplan(tick);
+        }
+        return true;
+    }
+
     private void beginReplan(long tick) {
         beginReplan(tick, true);
     }
@@ -974,13 +1173,20 @@ public final class NavigationSession {
         if (closed || status == NavigationStatus.CANCELLED) return;
         if (status == NavigationStatus.SEARCHING
                 || (status == NavigationStatus.WAITING_REGION && search != null)) return;
+        resetReplanBudgetAfterMovement();
         if (obstruction && replans >= MAX_REPLANS) {
             terminate(NavigationStatus.LIMIT_REACHED);
             return;
         }
-        if (obstruction) replans++;
+        if (obstruction) {
+            replans++;
+            obstructionOrigin = entity.position();
+        }
         partialExhausted = false;
-        NavigationPath prefix = safePrefix();
+        partialGoal = false;
+        continuation = null;
+        continuationRetryTick = -1;
+        NavigationPath prefix = flying() ? NavigationPath.empty() : safePrefix();
         path = prefix;
         searchPrefix = prefix;
         search = null;
@@ -1005,6 +1211,7 @@ public final class NavigationSession {
             terminate(NavigationStatus.CANCELLED);
             return false;
         }
+        resetReplanBudgetAfterMovement();
         if (deadlineTick >= 0 && tick > deadlineTick
                 && (status == NavigationStatus.SEARCHING
                 || status == NavigationStatus.WAITING_REGION)
@@ -1013,6 +1220,13 @@ public final class NavigationSession {
             return false;
         }
         return true;
+    }
+
+    private void resetReplanBudgetAfterMovement() {
+        if (obstructionOrigin != null && entity.position().distanceToSqr(obstructionOrigin) >= 2.25) {
+            replans = 0;
+            obstructionOrigin = null;
+        }
     }
 
     private void terminate(NavigationStatus next) {
@@ -1025,6 +1239,8 @@ public final class NavigationSession {
         path = NavigationPath.empty();
         searchPrefix = NavigationPath.empty();
         search = null;
+        continuation = null;
+        continuationRetryTick = -1;
         retryTick = -1;
         pendingGoalReplan = false;
         driver.clear();

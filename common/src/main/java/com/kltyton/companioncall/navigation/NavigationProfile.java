@@ -108,6 +108,15 @@ public final class NavigationProfile {
                 boxOverridden, capabilitiesOverridden);
     }
 
+    NavigationProfile withoutFlight() {
+        if (!allows(TravelMode.AIR)) return this;
+        if (modes.size() == 1) return withMode(TravelMode.LAND);
+        EnumSet<TravelMode> remaining = EnumSet.copyOf(modes);
+        remaining.remove(TravelMode.AIR);
+        return new NavigationProfile(remaining, minX, minY, minZ, maxX, maxY, maxZ, maxUpStep,
+                canJump, maxJumpHeight, canDrop, maxDropHeight, boxOverridden, capabilitiesOverridden);
+    }
+
     /** Replaces the shape with a box whose coordinates are relative to the entity position. */
     public NavigationProfile withCollisionBox(AABB localBox) {
         return new NavigationProfile(modes, localBox.minX, localBox.minY, localBox.minZ,
