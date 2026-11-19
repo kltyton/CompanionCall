@@ -575,6 +575,34 @@ final class CollisionWorld {
         return new FluidResult(Tri.CLEAR, water, lava, top);
     }
 
+    FluidResult waterSurfaceAt(Vec3 feet) {
+        FluidResult base = fluidProbe(feet.x, feet.y + 0.02, feet.z);
+        if (base.status != Tri.CLEAR || !base.water) return base;
+        FluidResult top = base;
+        for (int step = 1; step <= 3; step++) {
+            FluidResult above = fluidProbe(feet.x, Math.floor(feet.y + 0.02) + step + 0.02, feet.z);
+            if (above.status != Tri.CLEAR) return above;
+            if (!above.water) break;
+            top = above;
+        }
+        return top;
+    }
+
+    double waterDepthAt(Vec3 feet, double surfaceTop, NavigationProfile profile) {
+        int blockY = floor(surfaceTop - 0.01);
+        FluidResult below = fluidProbe(feet.x, blockY - 0.5, feet.z);
+        if (below.status == Tri.CLEAR && below.water) return 2.0;
+        AABB probe = new AABB(feet.x + profile.localMinX(), blockY, feet.z + profile.localMinZ(),
+                feet.x + profile.localMaxX(), surfaceTop, feet.z + profile.localMaxZ());
+        BoxSet boxes = collisionBoxes(probe);
+        if (boxes.status != Tri.CLEAR) return surfaceTop - blockY;
+        double floorY = blockY;
+        for (AABB box : boxes.boxes) {
+            if (box.maxY <= surfaceTop && box.maxY > floorY) floorY = box.maxY;
+        }
+        return surfaceTop - floorY;
+    }
+
     private void requireServerThread() {
         if (!level.getServer().isSameThread()) {
             throw new IllegalStateException("Navigation collision queries must run on the server thread");

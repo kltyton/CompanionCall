@@ -279,6 +279,14 @@ final class AStarPlanner {
     private void expandToLand(Node current) {
         int blockX = floor(current.feet.x);
         int blockZ = floor(current.feet.z);
+        CollisionWorld.FluidResult surface = world.waterSurfaceAt(current.feet);
+        if (surface.status == CollisionWorld.Tri.UNKNOWN) {
+            unknownSeen = true;
+            return;
+        }
+        double fluidJumpThreshold = (profile.localMaxY() - profile.localMinY()) < 0.4 ? 0.0 : 0.4;
+        boolean floatingExit = surface.water && world.waterDepthAt(current.feet, surface.top, profile) > fluidJumpThreshold;
+        double maxWaterExitY = floatingExit ? surface.top + 0.65 : Double.POSITIVE_INFINITY;
         for (int[] direction : HORIZONTAL) {
             CollisionWorld.CenterResult centers = world.horizontalCandidates(
                     blockX + direction[0], blockZ + direction[1], current.feet.y, profile);
@@ -298,6 +306,7 @@ final class AStarPlanner {
                 if (stands.status != CollisionWorld.Tri.CLEAR) continue;
                 boolean added = false;
                 for (double height : stands.heights) {
+                    if (height > maxWaterExitY) continue;
                     Vec3 target = new Vec3(center.x, height, center.z);
                     if (target.distanceToSqr(current.feet) < 1.0E-8) continue;
                     double dy = target.y - current.feet.y;

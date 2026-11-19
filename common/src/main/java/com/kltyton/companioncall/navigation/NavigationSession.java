@@ -833,8 +833,10 @@ public final class NavigationSession {
             case WAITING_REGION -> {
                 status = NavigationStatus.WAITING_REGION;
                 if (partialGoal) updatePartialPath(search.closestPath(), tick);
-                else path = searchPrefix;
-                driver.pathChanged(this, tick);
+                else if (path != searchPrefix) {
+                    path = searchPrefix;
+                    driver.pathChanged(this, tick);
+                }
                 retryTick = tick + REGION_RETRY_TICKS;
                 return result.used;
             }
@@ -939,8 +941,9 @@ public final class NavigationSession {
     private void updatePartialPath(NavigationPath candidate, long tick) {
         if (candidate.isEmpty() || (!path.isEmpty() && candidate.end().distanceToSqr(requestedGoal)
                 >= path.end().distanceToSqr(requestedGoal))) return;
+        NavigationPath previous = path;
         path = candidate;
-        driver.pathChanged(this, tick);
+        if (!driver.keepCurrentLeg(previous, candidate)) driver.pathChanged(this, tick);
     }
 
     private boolean queueTakeoff(long tick) {

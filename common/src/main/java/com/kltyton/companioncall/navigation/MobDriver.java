@@ -85,6 +85,18 @@ public final class MobDriver {
         bestRemaining = Math.max(0.0, path.length() - routeCursor);
     }
 
+    /** A streamed extension keeps navigation progress when its whole driven prefix matches. */
+    boolean keepCurrentLeg(NavigationPath previous, NavigationPath replacement) {
+        if (previous.segments().size() <= cursorSegment || replacement.segments().size() <= cursorSegment) return false;
+        for (int i = 0; i <= cursorSegment; i++) {
+            var old = previous.segments().get(i);
+            var next = replacement.segments().get(i);
+            if (old.kind() != next.kind() || !old.from().equals(next.from()) || !old.to().equals(next.to())) return false;
+        }
+        bestRemaining = Math.max(0, bestRemaining + replacement.length() - previous.length());
+        return true;
+    }
+
     void updateCursor(Vec3 position, NavigationPath path) {
         if (path.isEmpty() || path.segments().isEmpty()) {
             cursorSegment = 0;
