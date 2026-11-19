@@ -18,7 +18,7 @@
 
 ## 安装
 
-客户端和服务端都需要安装与 Minecraft 版本、加载器对应的独立版。Fabric 还需要对应版本的 Fabric API。独立版包含 KltytonUI 及其内置的 NeonJS 脚本运行时。`embedded` 版需要宿主提供 KltytonUI 1.3.1 或更高版本。两个版本选装其一。
+客户端和服务端都需要安装与 Minecraft 版本、加载器对应的独立版。Fabric 还需要对应版本的 Fabric API。独立版包含 KltytonUI 及其内置的 NeonJS 脚本运行时。`embedded` 版需要宿主提供 KltytonUI 1.3.2 或更高版本。两个版本选装其一。
 
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |

@@ -55,7 +55,7 @@ if (loader == 'fabric') {
 } else {
     dependencies {
         jarJar(kui) {
-            version { strictly "[${kuiVersion}]"; prefer kuiVersion }
+            version { strictly "[${kuiVersion},)"; prefer kuiVersion }
         }
     }
     if (loader == 'forge') {

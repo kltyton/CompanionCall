@@ -18,7 +18,7 @@ Tamed companions are registered as they are discovered. Other entities, includin
 
 ### Installation
 
-Install the standalone file matching your Minecraft version and loader on both client and server. Fabric also requires the matching Fabric API. The standalone file includes KltytonUI with its NeonJS script runtime. The `embedded` variant requires the host to supply KltytonUI 1.3.1 or later. Install only one variant.
+Install the standalone file matching your Minecraft version and loader on both client and server. Fabric also requires the matching Fabric API. The standalone file includes KltytonUI with its NeonJS script runtime. The `embedded` variant requires the host to supply KltytonUI 1.3.2 or later. Install only one variant.
 
 | Minecraft | Loader | Java |
 | --- | --- | --- |

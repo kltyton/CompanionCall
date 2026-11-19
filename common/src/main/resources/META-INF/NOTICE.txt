@@ -6,7 +6,7 @@ and kltyton, licensed under MIT. Its license is included in licenses/.
 
 The standalone distribution includes unmodified KltytonUI, licensed under
 LGPL-2.1. Its license is included in licenses/. Corresponding source:
-https://github.com/kltyton/KltytonUI/commit/a9c4dd56df6c2caa6b877068a5f359e45a96a010
+https://github.com/kltyton/KltytonUI/commit/94200889bc112b6f4c128d241b23b21ad1a4bc42
 KltytonUI and its nested libraries retain their own licenses and notices.
 The embedded distribution uses the host's KltytonUI installation.
 
